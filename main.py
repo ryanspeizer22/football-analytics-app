@@ -37,6 +37,7 @@ from services import (
     competitions,
     enrich,
     momentum,
+    player_profile,
     rate_limit,
     stats,
     summary_cache,
@@ -434,6 +435,30 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
 # ---------------------------------------------------------------------------
 # API — player stats
 # ---------------------------------------------------------------------------
+
+@app.get("/api/player/{player_id}/season")
+def player_season(player_id: int, season: int = Query(None)):
+    """Aggregated season profile for the player-card drawer.
+
+    Deliberately AI-free: this opens on a click, so it must be instant and
+    free. Cached, since a completed season's totals never change.
+    """
+    season = season or competitions.default_season()
+    cache_key = f"profile-{player_id}-{season}"
+    cached = summary_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        raw = api_service.get_player_season_stats(player_id, season)
+    except api_service.FootballAPIError as exc:
+        logger.info("Season profile unavailable for %s (%s): %s", player_id, season, exc)
+        raise _api_error(exc) from exc
+
+    profile = player_profile.build_profile(raw, season)
+    summary_cache.set(cache_key, profile)
+    return profile
+
 
 @app.get("/api/player/{player_id}/stats")
 def player_stats(

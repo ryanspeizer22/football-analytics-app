@@ -64,7 +64,16 @@ structure, turning points) is stubbed out as a future premium feature.
 - **Momentum pulse** — a diverging area chart over match minutes: positive is
   the home side, negative the away side, neutral at the baseline, with a
   crosshair tooltip and goal markers. Labels are placed selectively so close
-  goals never collide.
+  goals never collide, and the tooltip clamps inside the plot so it can't
+  clip off-screen at kick-off or full time.
+- **Player season drawer** — clicking any MVP card opens that player's
+  aggregated season: weighted average rating, output, position-aware metrics
+  (a keeper's season is not a striker's), discipline, and a per-competition
+  breakdown. No model call — it opens on a click, so it's served straight
+  from the provider and cached.
+- **Loading skeleton** — an uncached match shows a shimmering skeleton that
+  mirrors the final layout, with the scoreboard already populated so it's
+  clear *which* match is being analysed during the ~1 minute wait.
 
 > **What momentum is, honestly:** the free data tier exposes per-event minutes
 > (goals, cards, VAR, subs) but only match *totals* for shots and possession —
@@ -169,6 +178,7 @@ keep serving normally. Live budget state is on `GET /health`.
 | `GET /api/trending` | Pre-seeded iconic fixtures for the homepage grid |
 | `GET /api/fixtures?team1=&team2=` | Head-to-head or season fixtures for a team |
 | `GET /api/match/{fixture_id}/summary` | Three-layer AI match summary (JSON; `?refresh=true` to regenerate) |
+| `GET /api/player/{player_id}/season?season=YYYY` | Aggregated season profile for the card drawer (no AI, cached) |
 | `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note (cached; `?refresh=true`) |
 | `GET /api/premium/tactical/{fixture_id}` | Premium tactical tier (placeholder) |
 | `GET /health` | Health check + current AI-spend budget |

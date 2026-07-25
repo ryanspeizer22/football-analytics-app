@@ -675,6 +675,106 @@
       color: var(--rarity); opacity: 0.85;
     }
 
+    /* ===== Player season drawer ===== */
+    .drawer-scrim {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(3, 5, 10, 0.72);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none; transition: opacity 0.22s ease;
+    }
+    .drawer-scrim.open { opacity: 1; pointer-events: auto; }
+
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 201;
+      width: min(430px, 100%);
+      background: linear-gradient(180deg, rgba(16, 22, 34, 0.99), rgba(8, 11, 18, 0.99));
+      border-left: 1px solid var(--border-bright);
+      box-shadow: -24px 0 60px rgba(0, 0, 0, 0.6);
+      transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      overflow-y: auto; overscroll-behavior: contain;
+      padding: 1.4rem 1.5rem 2.5rem;
+    }
+    .drawer.open { transform: translateX(0); }
+    @media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
+
+    .drawer-close {
+      position: absolute; top: 1rem; right: 1.1rem;
+      width: 30px; height: 30px; border-radius: 8px;
+      background: var(--glass-strong); border: 1px solid var(--border);
+      color: var(--text-dim); font-size: 1rem; cursor: pointer; line-height: 1;
+    }
+    .drawer-close:hover { color: var(--text); border-color: var(--border-bright); }
+
+    .dw-hero { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 0.4rem; }
+    .dw-portrait {
+      width: 66px; height: 66px; border-radius: 50%; flex-shrink: 0;
+      border: 2px solid var(--rarity, var(--neon)); overflow: hidden;
+      box-shadow: 0 0 18px color-mix(in srgb, var(--rarity, var(--neon)) 50%, transparent);
+      background: rgba(255,255,255,0.06); display: grid; place-items: center;
+    }
+    .dw-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .dw-name { font-size: 1.12rem; font-weight: 800; line-height: 1.2; }
+    .dw-meta { font-size: 0.76rem; color: var(--text-dim); margin-top: 0.25rem; }
+    .dw-season-tag {
+      display: inline-block; margin-top: 0.5rem;
+      font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--neon); border: 1px solid rgba(55,240,162,0.4);
+      background: var(--neon-soft); border-radius: 999px; padding: 0.18rem 0.6rem;
+    }
+
+    .dw-rating-row {
+      display: grid; grid-template-columns: auto 1fr; gap: 0.9rem; align-items: center;
+      margin: 1.1rem 0 1.2rem; padding: 0.9rem 1rem;
+      background: var(--glass-strong); border: 1px solid var(--border); border-radius: 13px;
+    }
+    .dw-rating-badge {
+      min-width: 58px; height: 58px; border-radius: 13px; display: grid; place-items: center;
+      font-size: 1.35rem; font-weight: 800; color: #060810;
+      background: linear-gradient(135deg, var(--rarity, var(--neon)),
+                  color-mix(in srgb, var(--rarity, var(--neon)) 60%, white));
+      box-shadow: 0 0 20px color-mix(in srgb, var(--rarity, var(--neon)) 55%, transparent);
+    }
+    .dw-rating-label { font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); }
+    .dw-rating-sub { font-size: 0.86rem; margin-top: 0.25rem; }
+
+    .dw-section-title {
+      font-size: 0.66rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--text-dim); margin: 1.3rem 0 0.6rem;
+    }
+    .dw-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.55rem; }
+    .dw-stat {
+      background: rgba(255,255,255,0.045); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.6rem 0.5rem; text-align: center;
+    }
+    .dw-stat .v { font-size: 1.06rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .dw-stat .l { font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase;
+                  color: var(--text-dim); margin-top: 0.2rem; }
+
+    .dw-comp {
+      display: grid; grid-template-columns: 1fr auto auto; gap: 0.6rem; align-items: center;
+      padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.83rem;
+    }
+    .dw-comp:last-child { border-bottom: none; }
+    .dw-comp .cname { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dw-comp .capps { color: var(--text-dim); font-size: 0.76rem; white-space: nowrap; }
+    .dw-comp .crating {
+      font-weight: 800; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right;
+    }
+    .dw-empty { color: var(--text-dim); font-size: 0.86rem; padding: 1.4rem 0; text-align: center; }
+
+    /* Skeleton shimmer, shared by the drawer and the match loading state */
+    @keyframes shimmer { 0% { background-position: -420px 0; } 100% { background-position: 420px 0; } }
+    .sk {
+      background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.11) 50%,
+                                  rgba(255,255,255,0.04) 100%);
+      background-size: 420px 100%;
+      animation: shimmer 1.25s linear infinite;
+      border-radius: 8px;
+    }
+    @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+    .sk-line { height: 12px; margin-bottom: 0.55rem; }
+    .sk-circle { border-radius: 50%; }
+
     /* ===== Premium panel ===== */
     .premium-card {
       text-align: center; padding: 3rem 1.5rem;
@@ -707,9 +807,26 @@
       background: var(--neon); box-shadow: 0 0 16px var(--neon);
     }
     @keyframes sweep { to { transform: rotate(360deg); } }
-    .loader .hype { font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.95rem; }
-    .loader .hype-sub { color: var(--text-dim); font-size: 0.8rem; margin-top: 0.5rem; }
-    .loader .note { color: var(--text-dim); opacity: 0.6; font-size: 0.7rem; margin-top: 1.6rem; }
+    .hype { font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; font-size: 0.88rem; }
+    .hype-sub { color: var(--text-dim); font-size: 0.78rem; margin-top: 0.3rem; }
+    .note { color: var(--text-dim); opacity: 0.6; font-size: 0.7rem; margin-top: 1rem; }
+    .loader .hype { font-size: 0.95rem; }
+    .loader .hype-sub { margin-top: 0.5rem; }
+    .loader .note { margin-top: 1.6rem; }
+
+    /* Indeterminate progress — the model gives no percentage, so this signals
+       "working" rather than faking a completion estimate. */
+    .sk-progress {
+      width: 110px; height: 4px; border-radius: 3px; flex-shrink: 0;
+      background: rgba(255,255,255,0.08); overflow: hidden; position: relative;
+    }
+    .sk-progress span {
+      position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 3px;
+      background: linear-gradient(90deg, transparent, var(--neon), transparent);
+      animation: sweepBar 1.6s ease-in-out infinite;
+    }
+    @keyframes sweepBar { 0% { left: -40%; } 100% { left: 100%; } }
+    @media (prefers-reduced-motion: reduce) { .sk-progress span { animation: none; left: 0; width: 100%; } }
 
     .error-box {
       border-color: rgba(255, 93, 108, 0.45); color: var(--danger);
@@ -719,11 +836,60 @@
 
     footer { text-align: center; color: var(--text-dim); opacity: 0.55; font-size: 0.75rem; padding: 2.5rem 1rem; }
 
+    /* ===== Responsive ===== */
+    @media (max-width: 900px) {
+      header { padding: 0.8rem 1.1rem; gap: 0.9rem; }
+      main { padding: 1.5rem 1.1rem; }
+      /* The panorama is anchored to viewport width, so on narrow screens it
+         zooms in hard and the crowd sits right under the text — pull the band
+         back and deepen the scrim to compensate. */
+      .ambient .photo { background-size: auto 62vh; background-position: center 12%; }
+      .ambient .architecture { height: 56vh; }
+    }
+
     @media (max-width: 640px) {
-      header { padding: 0.8rem 1rem; flex-wrap: wrap; }
+      header {
+        padding: 0.7rem 0.9rem; flex-wrap: wrap; row-gap: 0.65rem;
+      }
+      .brand { font-size: 0.95rem; }
       .search-wrap { order: 3; flex-basis: 100%; max-width: none; }
-      main { padding: 1.2rem; }
-      .scoreboard { padding: 1.1rem 1.2rem; }
+      .search-bar { padding: 0.5rem 0.75rem; }
+      .search-bar kbd { display: none; }  /* no physical keyboard to hint at */
+      .search-bar input { font-size: 16px; }  /* iOS zooms in below 16px */
+
+      main { padding: 1.1rem 0.85rem 2rem; }
+      .hero h1 { font-size: 1.5rem; }
+      .hero p { font-size: 0.9rem; }
+      .section-head { margin: 1.6rem 0 0.8rem; }
+
+      .match-grid { grid-template-columns: 1fr; gap: 0.8rem; }
+      .mvp-grid { grid-template-columns: 1fr; }
+      .callout-row { grid-template-columns: repeat(2, 1fr); }
+
+      .scoreboard { padding: 1rem 1.1rem; gap: 0.6rem; }
+      .sb-mid .score { font-size: 1.6rem; }
+      .card { padding: 1.05rem 1.1rem; }
+      .tabs { gap: 0.3rem; }
+      .tab { padding: 0.45rem 0.8rem; font-size: 0.72rem; }
+
+      /* Full-width sheet rather than a side drawer on a phone. */
+      .drawer {
+        width: 100%; top: auto; height: 88vh; border-radius: 18px 18px 0 0;
+        border-left: none; border-top: 1px solid var(--border-bright);
+        transform: translateY(100%); padding: 1.2rem 1.1rem 2rem;
+      }
+      .drawer.open { transform: translateY(0); }
+      .dw-stat-grid { grid-template-columns: repeat(2, 1fr); }
+
+      .comp-chips { gap: 0.4rem; }
+      .comp-chip { padding: 0.45rem 0.7rem; font-size: 0.8rem; }
+      .moment-list { gap: 0.35rem; }
+      footer { padding: 1.8rem 1rem; }
+    }
+
+    @media (max-width: 380px) {
+      .callout-row { grid-template-columns: 1fr; }
+      .dw-stat-grid { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -856,16 +1022,66 @@
     <section id="view-summary" class="view">
       <button class="back-btn" data-back>← Back</button>
 
-      <div id="summary-loading" class="loader" hidden>
-        <div class="radar"></div>
-        <div class="hype" id="hype-msg">Scanning the pitch…</div>
-        <div class="hype-sub" id="hype-sub">Our AI is reliving every touch of the ball</div>
-        <div class="note">Deep analysis takes up to a minute — instant on revisits</div>
+      <!-- Outside #summary-content so it stays visible while generating —
+           otherwise a minute-long wait gives no sign of which match is
+           being analysed. -->
+      <div class="scoreboard" id="scoreboard" hidden></div>
+
+      <!-- Skeleton mirrors the real summary layout, so the page doesn't
+           reflow when the content lands. -->
+      <div id="summary-loading" hidden>
+        <div class="card" style="display:flex;align-items:center;gap:1rem;padding:1.1rem 1.3rem">
+          <div class="radar" style="width:44px;height:44px;margin:0"></div>
+          <div style="flex:1;min-width:0">
+            <div class="hype" id="hype-msg">Scanning the pitch…</div>
+            <div class="hype-sub" id="hype-sub">Our AI is reliving every touch of the ball</div>
+          </div>
+          <div class="sk-progress"><span id="sk-progress-bar"></span></div>
+        </div>
+
+        <div class="card">
+          <div class="sk sk-line" style="width:34%;height:10px"></div>
+          <div class="sk sk-line" style="width:72%;height:22px;margin-bottom:1rem"></div>
+          <div class="callout-row">
+            <div class="callout"><div class="sk sk-line" style="width:60%;height:9px"></div>
+              <div class="sk sk-line" style="width:85%;height:20px;margin-bottom:0.4rem"></div>
+              <div class="sk sk-line" style="width:100%;height:5px;margin:0"></div></div>
+            <div class="callout"><div class="sk sk-line" style="width:55%;height:9px"></div>
+              <div class="sk sk-line" style="width:80%;height:20px;margin-bottom:0.4rem"></div>
+              <div class="sk sk-line" style="width:100%;height:5px;margin:0"></div></div>
+            <div class="callout"><div class="sk sk-line" style="width:62%;height:9px"></div>
+              <div class="sk sk-line" style="width:70%;height:20px;margin-bottom:0.4rem"></div>
+              <div class="sk sk-line" style="width:100%;height:5px;margin:0"></div></div>
+            <div class="callout"><div class="sk sk-line" style="width:50%;height:9px"></div>
+              <div class="sk sk-line" style="width:78%;height:20px;margin-bottom:0.4rem"></div>
+              <div class="sk sk-line" style="width:100%;height:5px;margin:0"></div></div>
+          </div>
+          <div class="sk sk-line" style="width:92%"></div>
+          <div class="sk sk-line" style="width:86%"></div>
+          <div class="sk sk-line" style="width:94%"></div>
+          <div class="sk sk-line" style="width:70%"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="sk sk-line" style="width:45%;height:14px;margin-bottom:0.9rem"></div>
+            <div class="sk sk-line" style="width:96%"></div>
+            <div class="sk sk-line" style="width:88%"></div>
+            <div class="sk sk-line" style="width:92%"></div>
+            <div class="sk sk-line" style="width:60%"></div>
+          </div>
+          <div class="card">
+            <div class="sk sk-line" style="width:40%;height:14px;margin-bottom:0.9rem"></div>
+            <div class="sk sk-line" style="width:90%"></div>
+            <div class="sk sk-line" style="width:95%"></div>
+            <div class="sk sk-line" style="width:82%"></div>
+            <div class="sk sk-line" style="width:66%"></div>
+          </div>
+        </div>
+        <div class="note" style="text-align:center">Deep analysis takes up to a minute — instant on revisits</div>
       </div>
 
       <div id="summary-content" hidden>
-        <div class="scoreboard" id="scoreboard"></div>
-
         <nav class="tabs" role="tablist">
           <button class="tab active" data-panel="panel-shockwave">⚡ THE SHOCKWAVE</button>
           <button class="tab" data-panel="panel-tactical">⚔️ TACTICAL BREAKDOWN</button>
@@ -916,6 +1132,14 @@
       <div id="summary-error" class="card error-box" hidden></div>
     </section>
   </main>
+
+  <!-- Player season drawer -->
+  <div class="drawer-scrim" id="drawer-scrim"></div>
+  <aside class="drawer" id="player-drawer" role="dialog" aria-modal="true"
+         aria-labelledby="dw-name" tabindex="-1">
+    <button class="drawer-close" id="drawer-close" aria-label="Close">✕</button>
+    <div id="drawer-body"></div>
+  </aside>
 
   <footer>
     PITCHSENSE — data via API-Football · intelligence by Claude ·
@@ -1237,6 +1461,7 @@
       } catch (err) {
         $("summary-error").textContent = err.message;
         $("summary-error").hidden = false;
+        $("scoreboard").hidden = true;
       } finally {
         clearInterval(hypeTimer);
         $("summary-loading").hidden = true;
@@ -1244,6 +1469,7 @@
     }
 
     function renderScoreboard(m) {
+      $("scoreboard").hidden = false;
       $("scoreboard").style.setProperty("--c-home", m.home.color);
       $("scoreboard").style.setProperty("--c-away", m.away.color);
       $("scoreboard").innerHTML = `
@@ -1360,7 +1586,10 @@
                            {className:'initials', textContent:'${esc(initials(p.player_name))}'}))">`
           : `<span class="initials">${esc(initials(p.player_name))}</span>`;
         return `
-          <div class="mvp-card" style="--rarity:${color};animation-delay:${Math.min(idx * 45, 500)}ms">
+          <div class="mvp-card" style="--rarity:${color};animation-delay:${Math.min(idx * 45, 500)}ms"
+               data-player="${p.player_id ?? ""}" data-rarity="${color}"
+               role="button" tabindex="0"
+               aria-label="Season stats for ${esc(p.player_name)}">
             <div class="mvp-head">
               <div class="mvp-portrait">
                 <div class="frame">${portrait}</div>
@@ -1378,6 +1607,18 @@
             <div class="mvp-tier">${tier}</div>
           </div>`;
       }).join("");
+
+      // Clicking a card opens that player's season drawer.
+      document.querySelectorAll(".mvp-card[data-player]").forEach((card) => {
+        const pid = card.dataset.player;
+        if (!pid) { card.removeAttribute("role"); card.removeAttribute("tabindex"); return; }
+        card.style.cursor = "pointer";
+        const open = () => openPlayerDrawer(+pid, card.dataset.rarity);
+        card.addEventListener("click", open);
+        card.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+        });
+      });
 
       // 📈 Momentum pulse
       renderMomentum(data.momentum, match);
@@ -1530,9 +1771,29 @@
         const leader = val > 3 ? match.home.name : val < -3 ? match.away.name : "Balanced";
         tip.innerHTML = `<div class="tip-minute">${clamped}'</div>
                          <div class="tip-team">${esc(leader)} · ${Math.abs(val).toFixed(0)}</div>`;
-        tip.style.left = `${(x(clamped) / W) * 100}%`;
-        tip.style.top = `${(y(val) / H) * 100}%`;
-        tip.style.opacity = "1";
+
+        // Clamp inside the container. The tooltip is centred on the cursor and
+        // sits above it, so without this it clips off-screen at minute 0 and
+        // at full time, and is cut off at the top on a big momentum spike.
+        tip.style.opacity = "1";           // measure at full size, not mid-fade
+        const wrapW = wrap.clientWidth;
+        const tipW = tip.offsetWidth;
+        const tipH = tip.offsetHeight;
+        const margin = 8;
+
+        let leftPx = (x(clamped) / W) * wrapW;
+        leftPx = Math.max(tipW / 2 + margin, Math.min(wrapW - tipW / 2 - margin, leftPx));
+
+        const wrapH = wrap.clientHeight;
+        let topPx = (y(val) / H) * wrapH;
+        // translate(-50%,-115%) lifts it above the point; if that would push it
+        // past the top edge, flip it below the cursor instead.
+        const flip = topPx - tipH * 1.15 < margin;
+        tip.style.transform = flip ? "translate(-50%, 20%)" : "translate(-50%, -115%)";
+        if (flip) topPx = Math.min(topPx, wrapH - tipH - margin);
+
+        tip.style.left = `${leftPx}px`;
+        tip.style.top = `${topPx}px`;
       });
       hit.addEventListener("mouseleave", () => {
         cross.style.opacity = "0";
@@ -1566,6 +1827,131 @@
       // Unrated = didn't play. Must be the QUIETEST tier, not the loudest —
       // a neon frame here would make unused subs outshine the match winner.
       return { color: "#4b5563", tier: "Unrated" };
+    }
+
+    /* =========================== Player season drawer =========================== */
+    const drawer = $("player-drawer");
+    const drawerScrim = $("drawer-scrim");
+    const drawerBody = $("drawer-body");
+    let lastFocused = null;
+
+    function closeDrawer() {
+      drawer.classList.remove("open");
+      drawerScrim.classList.remove("open");
+      if (lastFocused) lastFocused.focus();
+    }
+    $("drawer-close").addEventListener("click", closeDrawer);
+    drawerScrim.addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && drawer.classList.contains("open")) closeDrawer();
+    });
+
+    async function openPlayerDrawer(playerId, rarityColor) {
+      lastFocused = document.activeElement;
+      drawer.style.setProperty("--rarity", rarityColor || "#37f0a2");
+      drawerBody.innerHTML = drawerSkeleton();
+      drawer.classList.add("open");
+      drawerScrim.classList.add("open");
+      drawer.focus();
+
+      try {
+        const res = await fetch(`/api/player/${playerId}/season`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+        drawerBody.innerHTML = drawerContent(data);
+      } catch (err) {
+        drawerBody.innerHTML =
+          `<div class="dw-empty">Couldn't load season stats.<br><span style="opacity:.7">${esc(err.message)}</span></div>`;
+      }
+    }
+
+    function drawerSkeleton() {
+      return `
+        <div class="dw-hero">
+          <div class="sk sk-circle" style="width:66px;height:66px;flex-shrink:0"></div>
+          <div style="flex:1">
+            <div class="sk sk-line" style="width:70%;height:16px"></div>
+            <div class="sk sk-line" style="width:45%;height:10px"></div>
+          </div>
+        </div>
+        <div class="sk sk-line" style="width:100%;height:78px;margin:1.1rem 0 1.2rem"></div>
+        <div class="dw-stat-grid">
+          ${Array.from({ length: 6 }, () => `<div class="sk" style="height:56px"></div>`).join("")}
+        </div>`;
+    }
+
+    function drawerContent(d) {
+      const p = d.player || {};
+      const t = d.totals || {};
+      const seasonLbl = seasonLabel(d.season);
+      const stat = (label, value) =>
+        value === null || value === undefined
+          ? ""
+          : `<div class="dw-stat"><div class="v">${esc(String(value))}</div><div class="l">${esc(label)}</div></div>`;
+
+      const bio = [p.position, p.nationality, p.age ? `${p.age} yrs` : null,
+                   p.height ? `${p.height}cm` : null].filter(Boolean).join(" · ");
+
+      return `
+        <div class="dw-hero">
+          <div class="dw-portrait">
+            ${p.photo
+              ? `<img src="${esc(p.photo)}" alt="" onerror="this.remove()">`
+              : ""}
+          </div>
+          <div style="min-width:0">
+            <div class="dw-name" id="dw-name">${esc(p.name || "Unknown player")}</div>
+            <div class="dw-meta">${esc(bio)}</div>
+            <span class="dw-season-tag">${esc(p.team || "")} · ${seasonLbl}</span>
+          </div>
+        </div>
+
+        <div class="dw-rating-row">
+          <div class="dw-rating-badge">${d.average_rating != null ? d.average_rating.toFixed(2) : "—"}</div>
+          <div>
+            <div class="dw-rating-label">Season average rating</div>
+            <div class="dw-rating-sub">
+              ${t.appearances ?? 0} appearances · ${(t.minutes ?? 0).toLocaleString()} minutes
+            </div>
+          </div>
+        </div>
+
+        <div class="dw-section-title">Output</div>
+        <div class="dw-stat-grid">
+          ${stat("Goals", t.goals ?? 0)}
+          ${stat("Assists", t.assists ?? 0)}
+          ${stat("Starts", t.lineups)}
+        </div>
+
+        ${(d.highlights || []).length ? `
+          <div class="dw-section-title">${esc(p.position || "Key")} metrics</div>
+          <div class="dw-stat-grid">
+            ${d.highlights.map((h) => stat(h.label, h.value)).join("")}
+          </div>` : ""}
+
+        <div class="dw-section-title">Discipline</div>
+        <div class="dw-stat-grid">
+          ${stat("Yellow", t.yellow_cards ?? 0)}
+          ${stat("Red", t.red_cards ?? 0)}
+          ${(() => {
+            // Minutes per card is the actual discipline rate; a raw card count
+            // flatters anyone who barely played.
+            const cards = (t.yellow_cards ?? 0) + (t.red_cards ?? 0);
+            if (!cards || !t.minutes) return stat("Mins/card", "—");
+            return stat("Mins/card", Math.round(t.minutes / cards));
+          })()}
+        </div>
+
+        ${(d.competitions || []).length ? `
+          <div class="dw-section-title">By competition</div>
+          <div>
+            ${d.competitions.map((c) => `
+              <div class="dw-comp">
+                <span class="cname">${esc(c.name || "—")}</span>
+                <span class="capps">${c.appearances ?? 0} apps${c.goals ? ` · ${c.goals}g` : ""}${c.assists ? ` · ${c.assists}a` : ""}</span>
+                <span class="crating">${c.rating != null ? c.rating.toFixed(2) : "—"}</span>
+              </div>`).join("")}
+          </div>` : `<div class="dw-empty">No competition breakdown available.</div>`}`;
     }
 
     /* =========================== Tabs =========================== */
