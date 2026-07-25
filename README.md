@@ -39,16 +39,22 @@ structure, turning points) is stubbed out as a future premium feature.
 
 ## Visual system
 
-- **Stadium atmosphere** — a full-bleed photograph of the Santiago Bernabéu
-  under floodlights forms the base layer, under a heavy dark vignette, with
-  club-colored radial gradients on top that retint the lighting to whichever
-  match is open. A procedural SVG stadium sits beneath as a fallback if the
-  photo fails to load. Swap the image via `--stadium-photo: url(...)`.
+- **Stadium atmosphere** — a wide panoramic of the Camp Nou bowl forms the base
+  layer: the full sweep of stands, crowd and green pitch across the screen,
+  under a dark vignette, with club-colored radial gradients on top that retint
+  the lighting to whichever match is open. A procedural SVG stadium sits
+  beneath as a fallback. Swap the image via `--stadium-photo: url(...)`.
 
-  > Photo by [Vienna Reyes](https://unsplash.com/@viennachanges) on
-  > [Unsplash](https://unsplash.com/photos/soccer-field-LDuFjsin71k), used under the
-  > [Unsplash License](https://unsplash.com/license) (free for commercial use).
-  > Served locally from `static/` so the page has no third-party image dependency.
+  Two details make it work on a dark UI: the source is a daylight shot, so it's
+  pulled down in exposure and pushed hard in saturation to keep the turf vivid
+  rather than grey-green; and headings sitting directly on the photo carry
+  their own text-shadow scrim, so legibility doesn't cost image brightness.
+
+  > Photo by [Bruno Barreto](https://unsplash.com/@brunobar) on
+  > [Unsplash](https://unsplash.com/photos/panoramic-photography-of-people-inside-a-soccer-stadium-oe9hCDWA2Fw),
+  > used under the [Unsplash License](https://unsplash.com/license) (free for
+  > commercial use). Served locally from `static/` so the page has no
+  > third-party image dependency.
 - **Player cards** — real headshots proxied through `/api/player-photo/{id}`
   and cached on disk (never hotlinked, so privacy extensions that block
   third-party media can't blank them), framed in

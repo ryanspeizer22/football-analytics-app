@@ -45,7 +45,7 @@
     }
 
     /* ===== Immersive stadium atmosphere =====
-       Base layer is a photograph of the Santiago Bernabéu by Vienna Reyes
+       Base layer is a wide panoramic of the Camp Nou bowl by Bruno Barreto
        (Unsplash License — free for commercial use), served locally so the
        page has no third-party image dependency. The procedural SVG stays
        underneath as a fallback if the photo ever fails to load. */
@@ -57,16 +57,25 @@
 
     .ambient .photo {
       position: absolute; inset: 0;
-      background-image: var(--stadium-photo, url("/static/stadium-bernabeu.jpg"));
-      background-size: cover;
-      background-position: center 22%;
-      /* Heavily knocked back: the photo is atmosphere, and body copy has to
-         stay legible on top of the crowd's high-frequency detail. */
-      opacity: var(--stadium-photo-opacity, 0.95);
-      /* Brighter and less desaturated than before so the stand structure and
-         the blue seating read as architecture rather than silhouette. */
-      filter: grayscale(0.14) contrast(1.08) brightness(0.82) saturate(1.12);
-      transform: scale(1.04);  /* hides edge softness from the blur/vignette */
+      background-image: var(--stadium-photo, url("/static/stadium-campnou.jpg"));
+      /* The source is a 2.84:1 panorama. `cover` on a normal viewport would
+         crop the sweep away, so the width is pinned and the band is anchored
+         high — keeping the whole bowl, pitch and crowd across the screen. */
+      background-size: 100% auto;
+      background-position: center 20%;
+      background-repeat: no-repeat;
+      opacity: var(--stadium-photo-opacity, 1);
+      /* Daylight source against a dark UI: pulled down in exposure, pushed hard
+         in saturation so the turf reads as vivid green rather than grey-green. */
+      filter: contrast(1.18) brightness(0.78) saturate(1.62);
+    }
+
+    /* The panorama's overcast sky is near-white and would glare at the top of
+       a dark page — fade it out independently of the main vignette. */
+    .ambient .photo::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg,
+        var(--bg) 0%, rgba(7,9,15,0.82) 7%, rgba(7,9,15,0.25) 16%, transparent 30%);
     }
 
     .ambient .architecture {
@@ -89,14 +98,15 @@
       mix-blend-mode: screen;  /* light adds to the photo instead of veiling it */
     }
 
-    /* Emerald pitch glow, rising off the turf at the base of the frame. */
+    /* Emerald spill, aimed at the turf inside the bowl rather than the base of
+       the viewport — the pitch sits mid-frame in a panoramic, not at the foot. */
     .ambient .pitch-glow {
-      position: absolute; left: 0; right: 0; bottom: 0; height: 55vh;
+      position: absolute; left: 0; right: 0; top: 0; height: 88vh;
       pointer-events: none; mix-blend-mode: screen;
       background:
-        radial-gradient(130% 105% at 50% 122%, rgba(42, 235, 145, 0.30) 0%,
-                        rgba(26, 178, 110, 0.15) 40%, transparent 74%),
-        radial-gradient(75% 58% at 50% 116%, rgba(140, 255, 200, 0.16), transparent 70%);
+        radial-gradient(52% 26% at 50% 46%, rgba(46, 240, 150, 0.34) 0%,
+                        rgba(28, 185, 115, 0.16) 45%, transparent 74%),
+        radial-gradient(88% 40% at 50% 52%, rgba(30, 200, 125, 0.14), transparent 72%);
     }
 
     /* Heavy dark vignette — the photo shows through at the top and corners,
@@ -107,14 +117,15 @@
       background:
         /* Corner vignette — keeps the frame dark without flattening the middle. */
         radial-gradient(125% 95% at 50% 18%, transparent 30%, rgba(4,6,12,0.55) 72%, rgba(4,6,12,0.9) 100%),
-        /* Vertical fall-off: stadium reads across the hero, then hands the
-           page over to solid background before the content grid begins. */
+        /* Vertical fall-off: the bowl reads across the hero, then the page
+           hands over to solid ground before the content grid begins. */
         linear-gradient(180deg,
-          rgba(4,6,12,0.55) 0%,
-          rgba(4,6,12,0.28) 18%,
-          rgba(4,6,12,0.55) 42%,
-          rgba(4,6,12,0.90) 66%,
-          var(--bg) 88%);
+          rgba(4,6,12,0.62) 0%,
+          rgba(4,6,12,0.24) 20%,
+          rgba(4,6,12,0.42) 40%,
+          rgba(4,6,12,0.86) 60%,
+          rgba(4,6,12,0.97) 74%,
+          var(--bg) 84%);
     }
     .ambient .grain { /* scanline texture, keeps large gradients from banding */
       position: absolute; inset: 0;
@@ -219,6 +230,12 @@
     .view.active { display: block; animation: viewIn 0.3s ease; }
     @keyframes viewIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
 
+    /* Bare text sits directly on the photograph, so it carries its own scrim.
+       A shadow keeps the stadium visible behind the words — darkening the
+       whole image instead would trade away the atmosphere to gain legibility. */
+    .eyebrow, .hero h1, .hero p, .section-head h2 {
+      text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 3px 16px rgba(0,0,0,0.85);
+    }
     .eyebrow {
       font-size: 0.72rem; font-weight: 800; letter-spacing: 0.22em;
       text-transform: uppercase; color: var(--neon); margin-bottom: 0.4rem;
@@ -227,8 +244,13 @@
       font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 800; line-height: 1.15;
       margin-bottom: 0.5rem; letter-spacing: -0.01em;
     }
-    .hero h1 .glow { color: var(--neon); text-shadow: 0 0 28px rgba(55, 240, 162, 0.5); }
-    .hero p { color: var(--text-dim); max-width: 560px; }
+    .hero h1 .glow {
+      color: var(--neon);
+      text-shadow: 0 0 28px rgba(55, 240, 162, 0.55), 0 2px 10px rgba(0,0,0,0.9);
+    }
+    /* Lifted off --text-dim: the dim tone was tuned for a solid panel and
+       loses too much against crowd detail. */
+    .hero p { color: #c3cbdb; max-width: 560px; }
 
     .section-head {
       display: flex; align-items: baseline; gap: 0.8rem;
@@ -243,7 +265,8 @@
     .comp-group { margin-bottom: 1.1rem; }
     .comp-group-label {
       font-size: 0.66rem; font-weight: 800; letter-spacing: 0.18em;
-      text-transform: uppercase; color: var(--text-dim); margin-bottom: 0.5rem;
+      text-transform: uppercase; color: #9aa5ba; margin-bottom: 0.5rem;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 2px 10px rgba(0,0,0,0.8);
     }
     .comp-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
     .comp-chip {
@@ -897,10 +920,10 @@
   <footer>
     PITCHSENSE — data via API-Football · intelligence by Claude ·
     stadium photograph by
-    <a href="https://unsplash.com/@viennachanges" target="_blank" rel="noopener noreferrer"
-       style="color:inherit">Vienna Reyes</a>
-    on <a href="https://unsplash.com/photos/soccer-field-LDuFjsin71k" target="_blank"
-          rel="noopener noreferrer" style="color:inherit">Unsplash</a>
+    <a href="https://unsplash.com/@brunobar" target="_blank" rel="noopener noreferrer"
+       style="color:inherit">Bruno Barreto</a>
+    on <a href="https://unsplash.com/photos/panoramic-photography-of-people-inside-a-soccer-stadium-oe9hCDWA2Fw"
+          target="_blank" rel="noopener noreferrer" style="color:inherit">Unsplash</a>
   </footer>
 
   <script>
