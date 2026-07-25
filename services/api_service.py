@@ -221,6 +221,17 @@ def get_league_fixtures(
     return _get("fixtures", params).get("response", [])
 
 
+def get_upcoming_fixtures(league_id: int, season: int, count: int = 10) -> list[dict[str, Any]]:
+    """Next scheduled fixtures for a competition.
+
+    `next` is a paid-tier parameter — it returns fixtures that haven't kicked
+    off, so these have no statistics and cannot be analysed, only listed.
+    """
+    return _get(
+        "fixtures", {"league": league_id, "season": season, "next": count}
+    ).get("response", [])
+
+
 def get_team_league_fixtures(
     team_id: int, league_id: int, season: int
 ) -> list[dict[str, Any]]:

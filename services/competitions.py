@@ -31,9 +31,15 @@ from typing import Any, Optional
 _DATA_FILE = Path(__file__).with_name("competitions_data.json")
 
 # --- Plan access window -----------------------------------------------------
-# Defaults describe the API-Football Free tier. Raise these after upgrading.
-PLAN_MIN_SEASON = int(os.environ.get("PITCHSENSE_MIN_SEASON", "2022"))
-PLAN_MAX_SEASON = int(os.environ.get("PITCHSENSE_MAX_SEASON", "2024"))
+# Defaults describe the API-Football Pro tier (verified: seasons 2024-2026
+# reachable, 7500 requests/day). On the Free tier these must be 2022/2024.
+PLAN_MIN_SEASON = int(os.environ.get("PITCHSENSE_MIN_SEASON", "2021"))
+PLAN_MAX_SEASON = int(os.environ.get("PITCHSENSE_MAX_SEASON", "2026"))
+
+# The season the UI opens on. Deliberately the most recent *completed* season
+# rather than the newest reachable one: 2026/27 exists in the provider's data
+# but hasn't kicked off, so it has no played matches to analyse.
+DEFAULT_COMPLETED_SEASON = int(os.environ.get("PITCHSENSE_SEASON", "2025"))
 
 COMPETITIONS: list[dict[str, Any]] = json.loads(_DATA_FILE.read_text())
 _BY_ID: dict[int, dict[str, Any]] = {c["id"]: c for c in COMPETITIONS}
@@ -64,15 +70,12 @@ def default_season(competition_id: Optional[int] = None) -> int:
     Honours PITCHSENSE_SEASON when set and reachable; otherwise picks the
     newest season this account can actually read.
     """
-    configured = os.environ.get("PITCHSENSE_SEASON")
     if competition_id is not None:
         options = accessible_seasons(competition_id)
-        if configured and int(configured) in options:
-            return int(configured)
+        if DEFAULT_COMPLETED_SEASON in options:
+            return DEFAULT_COMPLETED_SEASON
         return options[-1] if options else PLAN_MAX_SEASON
-    if configured:
-        return int(configured)
-    return PLAN_MAX_SEASON
+    return DEFAULT_COMPLETED_SEASON
 
 
 def get_competition(competition_id: int) -> Optional[dict[str, Any]]:
@@ -103,7 +106,10 @@ def public_list() -> list[dict[str, Any]]:
                 "country": comp["country"],
                 "emoji": comp["emoji"],
                 "seasons": seasons,
-                "default_season": seasons[-1] if seasons else None,
+                # default_season(), not seasons[-1]: the newest reachable
+                # season may not have kicked off yet, and opening a competition
+                # on a season with no played matches shows an empty grid.
+                "default_season": default_season(comp["id"]) if seasons else None,
                 "available": bool(seasons),
             }
         )

@@ -95,9 +95,13 @@ The effective set is the intersection, so the UI only ever offers seasons that
 actually return data. A blocked season returns `409` naming the seasons that
 *are* covered, rather than an empty grid.
 
-> **Current plan limit:** an API-Football **Free** plan covers seasons
-> **2022–2024** and 100 requests/day, so the newest reachable campaign is
-> 24/25. The 25/26 season requires a paid tier.
+> **Current plan:** API-Football **Pro** — seasons 2021–2026 and 7,500
+> requests/day (verified). Defaults live in `services/competitions.py`; on the
+> Free tier they must be set back to 2022/2024.
+
+The app opens on the newest **completed** season (2025/26), not the newest
+reachable one. 2026/27 exists in the provider's data but hasn't kicked off, so
+defaulting to it would open every competition on an empty grid.
 
 Season targeting is configuration, not code — after upgrading the plan:
 
@@ -171,6 +175,35 @@ SEO surface: `robots.txt` (crawlers allowed on the shell, blocked from `/api/`),
 `sitemap.xml`, canonical/OpenGraph/Twitter tags, JSON-LD `WebApplication`, and
 a PWA manifest so iOS can install it to the home screen.
 
+## Leaderboard & comparison
+
+**🏅 Global Leaderboard** ranks every player in a competition-season across
+seven metrics (rating, goals, assists, key passes, defensive actions, saves,
+conceded per 90), switchable by league.
+
+The pool is built from the provider's full paginated player list — ~34 calls
+for 535 Premier League players — rather than its two-call `topscorers` /
+`topassists` shortcuts. Those return only attackers and midfielders, so a
+"best average rating" board built on them would silently omit every
+goalkeeper and nearly every defender. The pool is cached, so every re-sort is
+free.
+
+Two ranking details that matter:
+
+- **Rate metrics carry an appearance floor.** Without one, a player with a
+  single substitute cameo tops the rating table.
+- **Goalkeepers are ranked on goals conceded _per 90_, not totals.** A raw
+  "fewest conceded" board just ranks whoever played least — the first version
+  put four backup keepers with 5–7 games above Raya, Donnarumma and Alisson.
+
+**Head-to-head:** pick any two players (from the leaderboard or the MVP
+Battleground) via the ⧾VS button; the tray at the bottom opens a split-screen
+modal with proportional bars across eight metrics.
+
+> Clean sheets aren't offered: the provider exposes season totals for goals
+> conceded and saves but not clean sheets, and they can't be derived from
+> totals without per-match data.
+
 ## Generation performance
 
 Measured on a 40-player Premier League fixture (39,305 input tokens):
@@ -233,6 +266,8 @@ keep serving normally. Live budget state is on `GET /health`.
 | `GET /api/match/{fixture_id}/narrative` | Headline, TL;DR, takeaways, team breakdowns, momentum, stat deltas |
 | `GET /api/match/{fixture_id}/players` | Per-player notes with headshots (the long half) |
 | `GET /api/match/{fixture_id}/summary` | Both halves combined (`?refresh=true` to regenerate) |
+| `GET /api/leaderboard?league=&season=&metric=` | Season-wide player rankings across 7 metrics |
+| `GET /api/fixtures/upcoming?league=&count=` | Next scheduled fixtures (not analysable — no stats yet) |
 | `GET /api/player/{player_id}/season?season=YYYY` | Aggregated season profile for the card drawer (no AI, cached) |
 | `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note (cached; `?refresh=true`) |
 | `GET /api/premium/tactical/{fixture_id}` | Premium tactical tier (placeholder) |

@@ -38,6 +38,7 @@ from services import (
     api_service,
     competitions,
     enrich,
+    leaderboard,
     momentum,
     player_profile,
     rate_limit,
@@ -371,6 +372,56 @@ def player_photo(player_id: int):
     )
 
 
+@app.get("/api/fixtures/upcoming")
+def upcoming_fixtures(league: int = Query(39), count: int = Query(8, ge=1, le=30)):
+    """Next scheduled fixtures — pre-season and early-season.
+
+    These have not kicked off, so they carry no statistics and are explicitly
+    marked unanalysable; the UI lists them rather than offering a summary.
+    Cached briefly: the schedule changes far more slowly than it's viewed, but
+    it is not immutable the way a finished match is.
+    """
+    comp = competitions.get_competition(league)
+    if comp is None:
+        raise HTTPException(status_code=404, detail="Unknown competition.")
+
+    # The upcoming season is the newest the plan can reach, not the completed
+    # default the rest of the app opens on.
+    seasons = competitions.accessible_seasons(league)
+    season = seasons[-1] if seasons else competitions.default_season(league)
+
+    cache_key = f"upcoming-{league}-{season}-{count}"
+    cached = summary_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        raw = api_service.get_upcoming_fixtures(league, season, count)
+    except api_service.FootballAPIError as exc:
+        logger.warning("Upcoming fetch failed for %s/%s: %s", league, season, exc)
+        raise _api_error(exc) from exc
+
+    fixtures_out = []
+    for f in raw:
+        card = _fixture_card(f)
+        card["kickoff"] = f["fixture"]["date"]
+        card["status"] = f["fixture"]["status"]["short"]
+        card["venue"] = (f["fixture"].get("venue") or {}).get("name")
+        card["analysable"] = False  # no stats exist until it's played
+        card["home"]["score"] = None
+        card["away"]["score"] = None
+        fixtures_out.append(card)
+
+    result = {
+        "competition": {"id": comp["id"], "name": comp["name"], "emoji": comp["emoji"]},
+        "season": season,
+        "count": len(fixtures_out),
+        "fixtures": fixtures_out,
+    }
+    summary_cache.set(cache_key, result)
+    return result
+
+
 @app.get("/api/trending")
 def trending():
     """Pre-seeded legendary fixtures for the homepage grid."""
@@ -585,6 +636,44 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
 # ---------------------------------------------------------------------------
 # API — player stats
 # ---------------------------------------------------------------------------
+
+@app.get("/api/leaderboard")
+def get_leaderboard(
+    league: int = Query(39),
+    season: int = Query(None),
+    metric: str = Query("rating"),
+    limit: int = Query(25, ge=1, le=100),
+):
+    """Season-wide player rankings for one competition.
+
+    The player pool is expensive to assemble (~34 provider calls) but never
+    changes for a completed season, so it's cached and every re-sort is free.
+    """
+    season = season or competitions.default_season(league)
+    comp = competitions.get_competition(league)
+    if comp is None:
+        raise HTTPException(status_code=404, detail="Unknown competition.")
+
+    pool_key = f"pool-{league}-{season}"
+    pool = summary_cache.get(pool_key)
+    if pool is None:
+        try:
+            pool = leaderboard.fetch_league_players(league, season)
+        except api_service.FootballAPIError as exc:
+            logger.warning("Leaderboard pool failed for %s/%s: %s", league, season, exc)
+            raise _api_error(exc) from exc
+        if pool:
+            summary_cache.set(pool_key, pool)
+
+    return {
+        "competition": {"id": comp["id"], "name": comp["name"], "emoji": comp["emoji"]},
+        "season": season,
+        "metric": metric,
+        "metrics": leaderboard.metric_options(),
+        "pool_size": len(pool),
+        "leaders": leaderboard.rank(pool, metric, limit),
+    }
+
 
 @app.get("/api/player/{player_id}/season")
 def player_season(player_id: int, season: int = Query(None)):
