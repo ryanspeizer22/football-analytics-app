@@ -38,6 +38,7 @@ from services import (
     enrich,
     momentum,
     rate_limit,
+    stats,
     summary_cache,
     teams,
 )
@@ -405,6 +406,19 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
         result["momentum"]["caption"] = momentum.summarize_shift(result["momentum"])
     except Exception:
         logger.exception("Momentum build failed for fixture %s", fixture_id)
+
+    # Stat deltas come straight from the provider's totals, never from prose.
+    try:
+        fixture_block = context["fixture"]["teams"]
+        comparisons = stats.build_comparisons(
+            context["team_statistics"],
+            fixture_block["home"]["id"],
+            fixture_block["away"]["id"],
+        )
+        result["stat_comparisons"] = comparisons
+        result["headline_metrics"] = stats.headline_metrics(comparisons)
+    except Exception:
+        logger.exception("Stat comparison failed for fixture %s", fixture_id)
 
     # Only cache summaries of finished matches — an in-play summary goes
     # stale the moment the next goal is scored.

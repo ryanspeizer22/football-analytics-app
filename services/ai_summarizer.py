@@ -47,12 +47,16 @@ class PlayerNote(BaseModel):
 
 class TeamBreakdown(BaseModel):
     team_name: str
+    verdict: str          # 3-6 word punchy summary, e.g. "Ruthless on the break"
     narrative: str        # how the match unfolded for this team
+    bullets: list[str]    # 3-4 scannable takeaways, each under ~14 words
     key_stats: list[str]  # standout numbers, e.g. "62% possession", "18 shots"
 
 
 class MatchSummary(BaseModel):
+    headline: str                      # 6-10 word hook, the match in one line
     tldr: str                          # Layer 1 — quick TL;DR
+    momentum_takeaways: list[str]      # 3-4 bullets on how the match swung
     team_breakdowns: list[TeamBreakdown]  # Layer 2 — one entry per team
     player_notes: list[PlayerNote]        # Layer 3 — notable performers
 
@@ -102,6 +106,14 @@ def generate_match_summary(match_context: dict[str, Any]) -> MatchSummary:
                 "content": (
                     "Summarize this match at all three layers "
                     "(TL;DR, team breakdowns, player-by-player notes).\n\n"
+                    "This feeds a scannable dashboard, so write for glanceability:\n"
+                    "- headline: 6-10 words, the match in one punchy line.\n"
+                    "- momentum_takeaways: 3-4 bullets tracing how control shifted, "
+                    "each naming the minute or passage that caused the swing.\n"
+                    "- Per team, `verdict` is 3-6 words; `bullets` are 3-4 concrete "
+                    "takeaways under ~14 words each, leading with the fact rather "
+                    "than a preamble. Keep `narrative` as the fuller prose account.\n"
+                    "Bullets must not restate each other or the headline.\n\n"
                     "For every player note, copy that player's numeric `id` from "
                     "the player_statistics data verbatim into player_id — do not "
                     "invent or guess an id.\n\n"
