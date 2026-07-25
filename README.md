@@ -58,6 +58,25 @@ You need two (free-tier) keys in `.env`:
 
 Open <http://127.0.0.1:8000>, enter a fixture ID, and hit **Analyze**.
 
+## Cost protection
+
+Generating a summary costs a model call (~1 minute); serving a cached one is
+free and instant. Three guards keep an exposed instance from running up a bill,
+and **only cache misses are counted** — repeat views never consume budget:
+
+| Guard | Default | Env var |
+|---|---|---|
+| Per-client sliding window | 8 / hour | `RATE_LIMIT_PER_CLIENT`, `RATE_LIMIT_WINDOW_SECONDS` |
+| Global daily cap | 150 / UTC day | `RATE_LIMIT_DAILY_MAX` |
+| Concurrent generations | 3 | `RATE_LIMIT_MAX_CONCURRENT` |
+
+A breach returns `429` with a `Retry-After` header; already-analyzed matches
+keep serving normally. Live budget state is on `GET /health`.
+
+> State is per-process. Under multiple uvicorn workers each worker holds its
+> own counters (so limits multiply by worker count); a multi-instance
+> deployment should move this to Redis.
+
 ## API
 
 | Route | Description |
@@ -67,9 +86,9 @@ Open <http://127.0.0.1:8000>, enter a fixture ID, and hit **Analyze**.
 | `GET /api/trending` | Pre-seeded iconic fixtures for the homepage grid |
 | `GET /api/fixtures?team1=&team2=` | Head-to-head or recent fixtures for a team |
 | `GET /api/match/{fixture_id}/summary` | Three-layer AI match summary (JSON; `?refresh=true` to regenerate) |
-| `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note |
+| `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note (cached; `?refresh=true`) |
 | `GET /api/premium/tactical/{fixture_id}` | Premium tactical tier (placeholder) |
-| `GET /health` | Health check |
+| `GET /health` | Health check + current AI-spend budget |
 
 ## Project structure
 
@@ -80,7 +99,8 @@ Open <http://127.0.0.1:8000>, enter a fixture ID, and hit **Analyze**.
 │   ├── ai_summarizer.py     # Claude summarization (3 layers, structured output)
 │   ├── teams.py             # Team registry: aliases, brand colors, search
 │   ├── trending.py          # Pre-seeded iconic fixtures
-│   └── summary_cache.py     # Memory + disk cache for generated summaries
+│   ├── summary_cache.py     # Memory + disk cache for generated summaries
+│   └── rate_limit.py        # Per-client / daily / concurrency cost guards
 ├── templates/
 │   └── index.html           # Tabbed dashboard
 ├── requirements.txt
