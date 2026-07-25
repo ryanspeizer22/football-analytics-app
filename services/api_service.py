@@ -95,6 +95,18 @@ def get_recent_fixtures(league_id: int, season: int, last: int = 10) -> list[dic
     ).get("response", [])
 
 
+def get_head_to_head(team1_id: int, team2_id: int) -> list[dict[str, Any]]:
+    """Fetch all head-to-head fixtures between two teams."""
+    return _get("fixtures/headtohead", {"h2h": f"{team1_id}-{team2_id}"}).get(
+        "response", []
+    )
+
+
+def get_team_season_fixtures(team_id: int, season: int) -> list[dict[str, Any]]:
+    """Fetch all of a team's fixtures for one season."""
+    return _get("fixtures", {"team": team_id, "season": season}).get("response", [])
+
+
 def build_match_context(fixture_id: int) -> dict[str, Any]:
     """Assemble everything the AI summarizer needs for one match in one call.
 
