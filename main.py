@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from services import ai_summarizer, api_service
+from services import ai_summarizer, api_service, summary_cache
 
 app = FastAPI(
     title="Football Analytics Summary",
@@ -50,14 +50,27 @@ async def home(request: Request):
 # API — match summaries
 # ---------------------------------------------------------------------------
 
+# Fixture status codes that mean the match is over and its summary is final.
+FINISHED_STATUSES = {"FT", "AET", "PEN"}
+
+
 @app.get("/api/match/{fixture_id}/summary")
-def match_summary(fixture_id: int):
+def match_summary(fixture_id: int, refresh: bool = False):
     """Return the three-layer AI summary for a fixture.
 
     Layer 1: tldr — quick TL;DR
     Layer 2: team_breakdowns — per-team narrative + key stats
     Layer 3: player_notes — player-by-player performance notes
+
+    Finished matches are cached (memory + disk); pass ?refresh=true to
+    regenerate.
     """
+    cache_key = f"match-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
         context = api_service.build_match_context(fixture_id)
     except api_service.FootballAPIError as exc:
@@ -68,7 +81,15 @@ def match_summary(fixture_id: int):
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return summary.model_dump()
+    result = summary.model_dump()
+
+    # Only cache summaries of finished matches — an in-play summary goes
+    # stale the moment the next goal is scored.
+    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
+    if status in FINISHED_STATUSES:
+        summary_cache.set(cache_key, result)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
