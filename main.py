@@ -32,6 +32,8 @@ from services import (
     ai_summarizer,
     api_service,
     competitions,
+    enrich,
+    momentum,
     rate_limit,
     summary_cache,
     teams,
@@ -144,6 +146,7 @@ def _fixture_card(f: dict) -> dict:
             "id": home["id"],
             "name": teams.display_name(home["id"], home["name"]),
             "full_name": home["name"],
+            "short": (teams.get_team(home["id"]) or {}).get("short", ""),
             "score": f["goals"]["home"],
             "color": home_color,
         },
@@ -151,6 +154,7 @@ def _fixture_card(f: dict) -> dict:
             "id": away["id"],
             "name": teams.display_name(away["id"], away["name"]),
             "full_name": away["name"],
+            "short": (teams.get_team(away["id"]) or {}).get("short", ""),
             "score": f["goals"]["away"],
             "color": away_color,
         },
@@ -319,6 +323,27 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     result = summary.model_dump()
+
+    # Attach real headshots/ratings, and derive the momentum timeline from the
+    # timestamped events. Both are enrichment: a failure here must not lose the
+    # analysis we just paid to generate.
+    try:
+        result["player_notes"] = enrich.enrich_player_notes(
+            result["player_notes"], context
+        )
+    except Exception:
+        logger.exception("Player enrichment failed for fixture %s", fixture_id)
+
+    try:
+        fixture_block = context["fixture"]["teams"]
+        result["momentum"] = momentum.build_timeline(
+            context["events"],
+            fixture_block["home"]["id"],
+            fixture_block["away"]["id"],
+        )
+        result["momentum"]["caption"] = momentum.summarize_shift(result["momentum"])
+    except Exception:
+        logger.exception("Momentum build failed for fixture %s", fixture_id)
 
     # Only cache summaries of finished matches — an in-play summary goes
     # stale the moment the next goal is scored.

@@ -36,19 +36,61 @@
       overflow-x: hidden;
     }
 
-    /* ===== Ambient stadium glow layer ===== */
+    /* ===== Immersive stadium atmosphere =====
+       Built procedurally (SVG architecture + CSS light) rather than from
+       stadium photography, which is licensed work we can't redistribute.
+       To use a licensed photo instead, set --stadium-photo to a url() and the
+       procedural layer fades behind it. */
     .ambient {
       position: fixed; inset: 0; z-index: -1; pointer-events: none;
-      background:
-        radial-gradient(600px 400px at 12% -5%, var(--home-glow), transparent 70%),
-        radial-gradient(600px 400px at 88% -5%, var(--away-glow), transparent 70%),
-        radial-gradient(900px 500px at 50% 110%, rgba(55, 240, 162, 0.07), transparent 70%),
-        var(--bg);
-      transition: background 0.8s ease;
+      overflow: hidden;
+      background: var(--bg);
     }
-    .ambient::after { /* scanline texture */
-      content: ""; position: absolute; inset: 0;
+
+    /* Optional licensed photograph — unset by default. */
+    .ambient .photo {
+      position: absolute; inset: 0;
+      background-image: var(--stadium-photo, none);
+      background-size: cover; background-position: center 30%;
+      opacity: var(--stadium-photo-opacity, 0.28);
+      filter: grayscale(0.35) contrast(1.1) brightness(0.5);
+    }
+
+    .ambient .architecture {
+      position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+      width: max(1600px, 120vw); height: 78vh; min-height: 520px;
+      opacity: 0.5;   /* atmosphere, not subject — content must stay dominant */
+    }
+
+    /* Floodlight wash from the two upper corners, tinted per match. */
+    .ambient .lights {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(760px 520px at 14% -8%, var(--home-glow), transparent 68%),
+        radial-gradient(760px 520px at 86% -8%, var(--away-glow), transparent 68%),
+        radial-gradient(1200px 560px at 50% 104%, rgba(55, 240, 162, 0.10), transparent 72%);
+      transition: background 0.9s ease;
+    }
+
+    /* Haze in the light beams + vignette to seat the content. */
+    .ambient .haze {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(80% 50% at 50% 0%, rgba(255,255,255,0.05), transparent 70%),
+        /* Deep vignette so body copy always sits on near-solid ground. */
+        radial-gradient(115% 80% at 50% 32%, transparent 10%, rgba(4,6,12,0.86) 62%, rgba(4,6,12,0.97) 100%),
+        linear-gradient(180deg, transparent 45%, var(--bg) 92%);
+    }
+    .ambient .grain { /* scanline texture, keeps large gradients from banding */
+      position: absolute; inset: 0;
       background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,0.012) 2px 4px);
+    }
+
+    /* Crowd shimmer — slow, barely-there life in the stands. */
+    @keyframes crowdPulse { 0%,100% { opacity: 0.5; } 50% { opacity: 0.78; } }
+    .ambient .architecture .crowd { animation: crowdPulse 9s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      .ambient .architecture .crowd { animation: none; }
     }
 
     /* ===== Header ===== */
@@ -375,6 +417,47 @@
       font-size: 0.76rem; color: var(--text-dim);
     }
 
+    /* ===== Momentum pulse chart ===== */
+    .momentum-card { padding-bottom: 1rem; }
+    .momentum-legend {
+      display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap;
+      margin-bottom: 0.75rem; font-size: 0.78rem; color: var(--text-dim);
+    }
+    .momentum-legend .key { display: flex; align-items: center; gap: 0.4rem; }
+    .momentum-legend .swatch { width: 12px; height: 3px; border-radius: 2px; }
+    .momentum-wrap { position: relative; width: 100%; }
+    .momentum-wrap svg { display: block; width: 100%; height: auto; }
+    .mm-grid { stroke: rgba(255,255,255,0.06); stroke-width: 1; }
+    .mm-baseline { stroke: rgba(255,255,255,0.28); stroke-width: 1; }
+    .mm-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    .mm-axis-label { fill: var(--text-dim); font-size: 10px; font-family: var(--font); }
+    .mm-goal { stroke: var(--bg-2); stroke-width: 2; }
+    .mm-hit { fill: transparent; cursor: crosshair; }
+    .mm-crosshair { stroke: rgba(255,255,255,0.35); stroke-width: 1; pointer-events: none; }
+    .momentum-tip {
+      position: absolute; pointer-events: none; opacity: 0;
+      background: rgba(10, 14, 22, 0.97); border: 1px solid var(--border-bright);
+      border-radius: 9px; padding: 0.5rem 0.7rem; font-size: 0.78rem;
+      transform: translate(-50%, -115%); transition: opacity 0.12s;
+      white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.55); z-index: 5;
+    }
+    .momentum-tip .tip-minute { font-weight: 800; margin-bottom: 0.15rem; }
+    .momentum-tip .tip-team { color: var(--text-dim); }
+    .momentum-caption {
+      margin-top: 0.7rem; font-size: 0.8rem; color: var(--text-dim);
+      display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+    }
+    .momentum-caption .model-note { opacity: 0.62; font-size: 0.72rem; }
+
+    .moment-list { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.9rem; }
+    .moment-pill {
+      display: flex; align-items: center; gap: 0.4rem;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: 999px; padding: 0.28rem 0.7rem; font-size: 0.76rem;
+    }
+    .moment-pill .min { font-weight: 800; font-variant-numeric: tabular-nums; }
+    .moment-pill .who { color: var(--text-dim); }
+
     /* ===== MVP trading cards ===== */
     .mvp-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -400,9 +483,48 @@
       content: ""; position: absolute; inset: 0 0 auto 0; height: 60px; pointer-events: none;
       background: linear-gradient(180deg, color-mix(in srgb, var(--rarity) 20%, transparent), transparent);
     }
-    .mvp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; position: relative; }
-    .mvp-name { font-weight: 800; font-size: 0.98rem; line-height: 1.25; }
-    .mvp-team { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin-top: 0.2rem; }
+    .mvp-head { display: flex; align-items: flex-start; gap: 0.7rem; position: relative; }
+
+    /* Headshot framed in the rarity color.
+       The circular frame clips the photo, so the shirt badge lives OUTSIDE
+       it — nesting the badge inside would clip it against the same radius. */
+    .mvp-portrait { position: relative; flex-shrink: 0; width: 58px; height: 58px; }
+    .mvp-portrait .frame {
+      width: 100%; height: 100%; border-radius: 50%;
+      background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03));
+      border: 2px solid var(--rarity);
+      box-shadow: 0 0 16px color-mix(in srgb, var(--rarity) 55%, transparent),
+                  inset 0 0 12px rgba(0,0,0,0.5);
+      overflow: hidden; display: grid; place-items: center;
+    }
+    .mvp-portrait img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      filter: contrast(1.05) saturate(1.05);
+    }
+    .mvp-portrait .initials {
+      font-weight: 800; font-size: 1.05rem; color: var(--rarity); letter-spacing: 0.02em;
+    }
+    .mvp-portrait .shirt {
+      position: absolute; right: -4px; bottom: -3px; z-index: 2;
+      min-width: 21px; height: 19px; padding: 0 4px; border-radius: 7px;
+      background: var(--bg-2); border: 1px solid var(--rarity);
+      display: grid; place-items: center;
+      font-size: 0.62rem; font-weight: 800; color: var(--rarity);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+    }
+
+    .mvp-identity { min-width: 0; flex: 1; }
+    .mvp-name { font-weight: 800; font-size: 0.95rem; line-height: 1.25; }
+    .mvp-team {
+      font-size: 0.68rem; letter-spacing: 0.09em; text-transform: uppercase;
+      color: var(--text-dim); margin-top: 0.2rem;
+    }
+    .mvp-pos {
+      display: inline-block; margin-top: 0.35rem;
+      font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em;
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 0.1rem 0.35rem; color: var(--text-dim);
+    }
     .mvp-rating {
       flex-shrink: 0;
       min-width: 44px; height: 44px; border-radius: 11px;
@@ -472,7 +594,88 @@
   </style>
 </head>
 <body>
-  <div class="ambient"></div>
+  <div class="ambient" aria-hidden="true">
+    <div class="photo"></div>
+    <!-- Tiered stands under floodlights, drawn in perspective. Purely
+         decorative: no text, no data, safe to ignore for a11y. -->
+    <svg class="architecture" viewBox="0 0 1600 700" preserveAspectRatio="xMidYMin slice">
+      <defs>
+        <linearGradient id="tierFar" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#1a2130" stop-opacity="0.95"/>
+          <stop offset="100%" stop-color="#0b0f18" stop-opacity="0.6"/>
+        </linearGradient>
+        <linearGradient id="tierNear" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#131a27" stop-opacity="0.95"/>
+          <stop offset="100%" stop-color="#070a11" stop-opacity="0.85"/>
+        </linearGradient>
+        <linearGradient id="roofSteel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#2b3547" stop-opacity="0.9"/>
+          <stop offset="100%" stop-color="#141a26" stop-opacity="0.4"/>
+        </linearGradient>
+        <radialGradient id="lampGlow">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.85"/>
+          <stop offset="45%" stop-color="#cfe4ff" stop-opacity="0.22"/>
+          <stop offset="100%" stop-color="#cfe4ff" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#dbeaff" stop-opacity="0.16"/>
+          <stop offset="100%" stop-color="#dbeaff" stop-opacity="0"/>
+        </linearGradient>
+        <!-- Crowd: a dense dot field, clipped to the stand shapes. -->
+        <pattern id="crowdDots" width="9" height="7" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1.15" fill="#8fa3c4" opacity="0.30"/>
+          <circle cx="6.5" cy="5" r="1.15" fill="#cfd9ea" opacity="0.20"/>
+        </pattern>
+        <clipPath id="standsClip">
+          <path d="M0,150 L1600,150 L1600,330 L0,330 Z"/>
+          <path d="M0,352 L1600,352 L1600,560 L0,560 Z"/>
+        </clipPath>
+      </defs>
+
+      <!-- Cantilever roof -->
+      <path d="M-40,96 L1640,96 L1500,150 L100,150 Z" fill="url(#roofSteel)"/>
+      <g stroke="#3b475d" stroke-opacity="0.5" stroke-width="1.5">
+        <line x1="180" y1="150" x2="240" y2="98"/><line x1="420" y1="150" x2="460" y2="98"/>
+        <line x1="660" y1="150" x2="682" y2="98"/><line x1="900" y1="150" x2="908" y2="98"/>
+        <line x1="1140" y1="150" x2="1128" y2="98"/><line x1="1380" y1="150" x2="1350" y2="98"/>
+      </g>
+
+      <!-- Upper tier, then lower tier, each a shallow trapezoid -->
+      <path d="M0,150 L1600,150 L1560,330 L40,330 Z" fill="url(#tierFar)"/>
+      <path d="M40,352 L1560,352 L1600,560 L0,560 Z" fill="url(#tierNear)"/>
+      <g class="crowd" clip-path="url(#standsClip)">
+        <rect x="0" y="140" width="1600" height="440" fill="url(#crowdDots)"/>
+      </g>
+      <!-- Vomitory gaps + step lines give the stands their tiered read -->
+      <g stroke="#050810" stroke-opacity="0.55" stroke-width="7">
+        <line x1="300" y1="150" x2="292" y2="330"/><line x1="800" y1="150" x2="800" y2="330"/>
+        <line x1="1300" y1="150" x2="1308" y2="330"/>
+        <line x1="200" y1="352" x2="186" y2="560"/><line x1="800" y1="352" x2="800" y2="560"/>
+        <line x1="1400" y1="352" x2="1414" y2="560"/>
+      </g>
+      <g stroke="#0a0e18" stroke-opacity="0.4" stroke-width="1.5">
+        <line x1="20" y1="240" x2="1580" y2="240"/>
+        <line x1="26" y1="452" x2="1574" y2="452"/>
+      </g>
+
+      <!-- Floodlight pylons: beam cones + lamp bloom -->
+      <g>
+        <path d="M150,70 L470,560 L-40,560 Z" fill="url(#beam)"/>
+        <path d="M1450,70 L1640,560 L1130,560 Z" fill="url(#beam)"/>
+        <circle cx="150" cy="70" r="120" fill="url(#lampGlow)"/>
+        <circle cx="1450" cy="70" r="120" fill="url(#lampGlow)"/>
+        <circle cx="150" cy="70" r="7" fill="#eaf3ff" opacity="0.9"/>
+        <circle cx="1450" cy="70" r="7" fill="#eaf3ff" opacity="0.9"/>
+      </g>
+
+      <!-- Pitch-level touchline glow -->
+      <ellipse cx="800" cy="640" rx="900" ry="120" fill="#0f2a1c" opacity="0.55"/>
+      <ellipse cx="800" cy="648" rx="700" ry="70" fill="#1d5c3a" opacity="0.30"/>
+    </svg>
+    <div class="lights"></div>
+    <div class="haze"></div>
+    <div class="grain"></div>
+  </div>
 
   <header>
     <div class="brand" id="brand"><span class="bolt">⚡</span> Pitch<em>Sense</em></div>
@@ -540,6 +743,18 @@
         </div>
 
         <div id="panel-tactical" class="panel">
+          <div class="card momentum-card" id="momentum-card" hidden>
+            <h3>📈 Momentum Pulse</h3>
+            <div class="momentum-legend" id="momentum-legend"></div>
+            <div class="momentum-wrap" id="momentum-wrap">
+              <div class="momentum-tip" id="momentum-tip"></div>
+            </div>
+            <div class="momentum-caption">
+              <span id="momentum-caption"></span>
+              <span class="model-note">Derived from timestamped match events (goals, cards, VAR, subs) with decay — not a measured pressure feed.</span>
+            </div>
+            <div class="moment-list" id="moment-list"></div>
+          </div>
           <div class="grid-2" id="tactical-grid"></div>
         </div>
 
@@ -923,16 +1138,34 @@
           </div>`;
       }).join("");
 
-      // 🔥 MVP Battleground — trading cards with rarity tiers
-      $("mvp-grid").innerHTML = data.player_notes.map((p, idx) => {
-        const rating = extractRating(p.rating_comment);
+      // 🔥 MVP Battleground — loot-drop cards with real headshots.
+      // Ranked by rating so the battleground opens on the match's best
+      // performers; unrated (unused subs) sink to the bottom.
+      const ranked = [...data.player_notes].sort((a, b) => {
+        const ra = a.rating ?? parseFloat(extractRating(a.rating_comment)) ?? -1;
+        const rb = b.rating ?? parseFloat(extractRating(b.rating_comment)) ?? -1;
+        return (isNaN(rb) ? -1 : rb) - (isNaN(ra) ? -1 : ra);
+      });
+      $("mvp-grid").innerHTML = ranked.map((p, idx) => {
+        // The provider's own rating is authoritative; fall back to the prose.
+        const rating = p.rating != null ? p.rating.toFixed(1) : extractRating(p.rating_comment);
         const { color, tier } = rarity(rating);
+        const portrait = p.photo
+          ? `<img src="${esc(p.photo)}" alt="" loading="lazy"
+                  onerror="this.replaceWith(Object.assign(document.createElement('span'),
+                           {className:'initials', textContent:'${esc(initials(p.player_name))}'}))">`
+          : `<span class="initials">${esc(initials(p.player_name))}</span>`;
         return `
           <div class="mvp-card" style="--rarity:${color};animation-delay:${Math.min(idx * 45, 500)}ms">
             <div class="mvp-head">
-              <div>
+              <div class="mvp-portrait">
+                <div class="frame">${portrait}</div>
+                ${p.number ? `<span class="shirt">${esc(String(p.number))}</span>` : ""}
+              </div>
+              <div class="mvp-identity">
                 <div class="mvp-name">${esc(p.player_name)}</div>
                 <div class="mvp-team">${esc(p.team)}</div>
+                ${p.position ? `<span class="mvp-pos">${esc(p.position)}</span>` : ""}
               </div>
               <div class="mvp-rating">${rating ?? "★"}</div>
             </div>
@@ -941,6 +1174,9 @@
             <div class="mvp-tier">${tier}</div>
           </div>`;
       }).join("");
+
+      // 📈 Momentum pulse
+      renderMomentum(data.momentum, match);
 
       $("summary-content").hidden = false;
 
@@ -956,6 +1192,134 @@
       document.querySelector('[data-panel="panel-shockwave"]').classList.add("active");
       document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
       $("panel-shockwave").classList.add("active");
+    }
+
+    function initials(name) {
+      return (name || "?")
+        .split(/\s+/).filter(Boolean).slice(0, 2)
+        .map((w) => w[0].toUpperCase()).join("");
+    }
+
+    /* ---- Momentum pulse: a diverging area chart over match minutes ----
+       Positive = home momentum, negative = away, neutral gray at the
+       zero baseline. Identity is carried by a legend AND the axis-end
+       labels, never by color alone. */
+    function renderMomentum(mm, match) {
+      const card = $("momentum-card");
+      if (!mm || !mm.series || mm.series.length < 2) { card.hidden = true; return; }
+      card.hidden = false;
+
+      const W = 900, H = 240, PAD_L = 34, PAD_R = 14, PAD_Y = 22;
+      const plotW = W - PAD_L - PAD_R, plotH = H - PAD_Y * 2;
+      const ft = mm.full_time || 90;
+      const x = (min) => PAD_L + (min / ft) * plotW;
+      const y = (val) => PAD_Y + (1 - (val + 100) / 200) * plotH;
+      const midY = y(0);
+
+      const pts = mm.series.map((v, i) => [x(i), y(v)]);
+      const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+      // Two fills clipped to their own half, so each arm reads as its team.
+      const areaHome = `${line} L${x(ft)},${midY} L${PAD_L},${midY} Z`;
+      const areaAway = areaHome;
+
+      const gridMinutes = [15, 30, 45, 60, 75].filter((m) => m < ft);
+      const grid = gridMinutes.map((m) =>
+        `<line class="mm-grid" x1="${x(m)}" y1="${PAD_Y}" x2="${x(m)}" y2="${H - PAD_Y}"/>
+         <text class="mm-axis-label" x="${x(m)}" y="${H - 6}" text-anchor="middle">${m}'</text>`
+      ).join("");
+
+      // Mark every goal, but label selectively: goals closer than 7 minutes
+      // would collide, so the later one keeps its marker and drops its label
+      // (the moment pills and tooltip still carry it).
+      const goals = (mm.moments || []).filter((s) => s.kind === "goal" || s.kind === "own_goal");
+      let lastLabelled = -99;
+      const goalMarks = goals.map((g) => {
+        const gy = y(mm.series[Math.min(g.minute, mm.series.length - 1)]);
+        const color = g.is_home ? match.home.color : match.away.color;
+        const marker = `<circle class="mm-goal" cx="${x(g.minute)}" cy="${gy}" r="5" fill="${esc(color)}"/>`;
+        if (g.minute - lastLabelled < 7) return marker;
+        lastLabelled = g.minute;
+        return marker + `
+          <text class="mm-axis-label" x="${x(g.minute)}" y="${gy + (g.is_home ? -11 : 17)}"
+                text-anchor="middle" style="font-weight:800">⚽ ${g.minute}'</text>`;
+      }).join("");
+
+      const svg = `
+        <svg viewBox="0 0 ${W} ${H}" role="img"
+             aria-label="Momentum over ${ft} minutes; positive favours ${esc(match.home.name)}">
+          <defs>
+            <clipPath id="clipHome"><rect x="0" y="${PAD_Y}" width="${W}" height="${midY - PAD_Y}"/></clipPath>
+            <clipPath id="clipAway"><rect x="0" y="${midY}" width="${W}" height="${H - PAD_Y - midY}"/></clipPath>
+            <linearGradient id="fillHome" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${esc(match.home.color)}" stop-opacity="0.55"/>
+              <stop offset="100%" stop-color="${esc(match.home.color)}" stop-opacity="0.05"/>
+            </linearGradient>
+            <linearGradient id="fillAway" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stop-color="${esc(match.away.color)}" stop-opacity="0.55"/>
+              <stop offset="100%" stop-color="${esc(match.away.color)}" stop-opacity="0.05"/>
+            </linearGradient>
+          </defs>
+          ${grid}
+          <path d="${areaHome}" fill="url(#fillHome)" clip-path="url(#clipHome)"/>
+          <path d="${areaAway}" fill="url(#fillAway)" clip-path="url(#clipAway)"/>
+          <line class="mm-baseline" x1="${PAD_L}" y1="${midY}" x2="${W - PAD_R}" y2="${midY}"/>
+          <path class="mm-line" d="${line}" stroke="${esc(match.home.color)}" clip-path="url(#clipHome)"/>
+          <path class="mm-line" d="${line}" stroke="${esc(match.away.color)}" clip-path="url(#clipAway)"/>
+          ${goalMarks}
+          <text class="mm-axis-label" x="4" y="${PAD_Y + 8}">${esc(match.home.short || "HOME")}</text>
+          <text class="mm-axis-label" x="4" y="${H - PAD_Y - 2}">${esc(match.away.short || "AWAY")}</text>
+          <line class="mm-crosshair" id="mm-cross" x1="0" y1="${PAD_Y}" x2="0" y2="${H - PAD_Y}" style="opacity:0"/>
+          <rect class="mm-hit" id="mm-hit" x="${PAD_L}" y="${PAD_Y}" width="${plotW}" height="${plotH}"/>
+        </svg>`;
+
+      const wrap = $("momentum-wrap");
+      wrap.querySelectorAll("svg").forEach((n) => n.remove());
+      wrap.insertAdjacentHTML("afterbegin", svg);
+
+      // Legend — identity never relies on color alone.
+      $("momentum-legend").innerHTML = `
+        <span class="key"><span class="swatch" style="background:${esc(match.home.color)}"></span>${esc(match.home.name)} ahead</span>
+        <span class="key"><span class="swatch" style="background:${esc(match.away.color)}"></span>${esc(match.away.name)} ahead</span>
+        <span class="key" style="opacity:.7">⚽ goal</span>`;
+      $("momentum-caption").textContent = mm.caption || "";
+
+      $("moment-list").innerHTML = (mm.moments || []).map((m) => {
+        const who = m.is_home ? match.home.name : match.away.name;
+        const icon = { goal: "⚽", own_goal: "🥅", red_card: "🟥",
+                       goal_cancelled: "🚫", penalty_missed: "❌" }[m.kind] || "•";
+        return `<span class="moment-pill"><span class="min">${m.minute}'</span> ${icon}
+                <span class="who">${esc(who)}${m.player ? " · " + esc(m.player) : ""}</span></span>`;
+      }).join("");
+
+      // Hover layer: crosshair + tooltip (required for line/area charts).
+      const hit = wrap.querySelector("#mm-hit");
+      const cross = wrap.querySelector("#mm-cross");
+      const tip = $("momentum-tip");
+      const svgEl = wrap.querySelector("svg");
+
+      hit.addEventListener("mousemove", (e) => {
+        const box = svgEl.getBoundingClientRect();
+        const scale = W / box.width;
+        const svgX = (e.clientX - box.left) * scale;
+        const minute = Math.round(((svgX - PAD_L) / plotW) * ft);
+        const clamped = Math.max(0, Math.min(ft, minute));
+        const val = mm.series[Math.min(clamped, mm.series.length - 1)];
+
+        cross.setAttribute("x1", x(clamped));
+        cross.setAttribute("x2", x(clamped));
+        cross.style.opacity = "1";
+
+        const leader = val > 3 ? match.home.name : val < -3 ? match.away.name : "Balanced";
+        tip.innerHTML = `<div class="tip-minute">${clamped}'</div>
+                         <div class="tip-team">${esc(leader)} · ${Math.abs(val).toFixed(0)}</div>`;
+        tip.style.left = `${(x(clamped) / W) * 100}%`;
+        tip.style.top = `${(y(val) / H) * 100}%`;
+        tip.style.opacity = "1";
+      });
+      hit.addEventListener("mouseleave", () => {
+        cross.style.opacity = "0";
+        tip.style.opacity = "0";
+      });
     }
 
     function teamColorFor(teamName, match) {
@@ -981,7 +1345,9 @@
       if (r >= 8)  return { color: "#c084fc", tier: "◆ Epic" };
       if (r >= 7)  return { color: "#60a5fa", tier: "● Rare" };
       if (!isNaN(r)) return { color: "#9ca3af", tier: "Common" };
-      return { color: "#37f0a2", tier: "Unrated" };
+      // Unrated = didn't play. Must be the QUIETEST tier, not the loudest —
+      // a neon frame here would make unused subs outshine the match winner.
+      return { color: "#4b5563", tier: "Unrated" };
     }
 
     /* =========================== Tabs =========================== */

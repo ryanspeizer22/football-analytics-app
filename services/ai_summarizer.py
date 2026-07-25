@@ -38,6 +38,7 @@ SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 class PlayerNote(BaseModel):
+    player_id: int        # copied from the supplied stats, used to attach a headshot
     player_name: str
     team: str
     rating_comment: str   # one-line verdict, e.g. "Ran the midfield; 91% pass accuracy"
@@ -101,6 +102,9 @@ def generate_match_summary(match_context: dict[str, Any]) -> MatchSummary:
                 "content": (
                     "Summarize this match at all three layers "
                     "(TL;DR, team breakdowns, player-by-player notes).\n\n"
+                    "For every player note, copy that player's numeric `id` from "
+                    "the player_statistics data verbatim into player_id — do not "
+                    "invent or guess an id.\n\n"
                     f"Match data:\n{json.dumps(match_context, ensure_ascii=False)}"
                 ),
             }

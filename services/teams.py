@@ -126,19 +126,44 @@ def _lighten(hex_color: str, amount: float) -> str:
 
 # Below this brightness a color disappears against the dark UI background.
 _MIN_LUMINANCE = 60.0
+# Below this channel spread a color reads as neutral gray/white rather than
+# as a team's identity — flat and washed out in a chart fill.
+_MIN_CHROMA = 26
+
+
+def _chroma(hex_color: str) -> int:
+    r, g, b = _hex_to_rgb(hex_color)
+    return max(r, g, b) - min(r, g, b)
+
+
+def _tint_neutral(hex_color: str) -> str:
+    """Give a near-neutral color a slight cool cast so it reads as chosen.
+
+    Monochrome kits (Newcastle, Juventus, Fulham) resolve to white here; a
+    pure white area fill looks like missing data, whereas a faint ice-blue
+    still reads as "the white team" while holding its own as a color.
+    """
+    if _chroma(hex_color) >= _MIN_CHROMA:
+        return hex_color
+    r, g, b = _hex_to_rgb(hex_color)
+    r = max(0, r - 26)
+    g = max(0, g - 10)
+    return f"#{r:02X}{g:02X}{b:02X}"
 
 
 def readable_color(hex_color: str, fallback: str) -> str:
-    """Ensure an accent color is visible on the dark background.
+    """Ensure an accent color is visible, and reads as a color, on dark.
 
     Near-black kits (Newcastle, Juventus) would otherwise render as an
-    invisible swatch — prefer the club's secondary color, else lighten.
+    invisible swatch — prefer the club's secondary color, else lighten —
+    and pure monochrome results get a faint tint so they aren't mistaken
+    for an empty chart region.
     """
     if _luminance(hex_color) >= _MIN_LUMINANCE:
-        return hex_color
+        return _tint_neutral(hex_color)
     if _luminance(fallback) >= _MIN_LUMINANCE:
-        return fallback
-    return _lighten(hex_color, 0.55)
+        return _tint_neutral(fallback)
+    return _tint_neutral(_lighten(hex_color, 0.55))
 
 
 def distinct_colors(home_id: int, away_id: int) -> tuple[str, str]:
