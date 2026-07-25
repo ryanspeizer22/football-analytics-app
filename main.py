@@ -21,13 +21,15 @@ from dotenv import load_dotenv
 # ANTHROPIC_API_KEY from the environment when the module is imported.
 load_dotenv()
 
+import json
 import logging
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -100,10 +102,63 @@ def _paid_call(request: Request, label: str):
 # Pages
 # ---------------------------------------------------------------------------
 
+# Absolute URLs are required for canonical links and OpenGraph images —
+# crawlers and link unfurlers won't resolve relative paths. Set this to the
+# real origin once a domain is pointed at the app.
+BASE_URL = os.environ.get("PITCHSENSE_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Render the main dashboard shell; data loads client-side from the API."""
-    return templates.TemplateResponse(request, "index.html")
+    return templates.TemplateResponse(request, "index.html", {"base_url": BASE_URL})
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots():
+    """Allow the app shell, keep crawlers out of the paid API surface."""
+    return (
+        "User-agent: *\n"
+        "Allow: /$\n"
+        "Allow: /static/\n"
+        "Disallow: /api/\n"
+        f"\nSitemap: {BASE_URL}/sitemap.xml\n"
+    )
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    """Single-page app, so one canonical entry."""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{BASE_URL}/</loc><changefreq>daily</changefreq>"
+        "<priority>1.0</priority></url>\n"
+        "</urlset>\n"
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    """PWA manifest — lets iOS/Android users install the app to the home screen."""
+    return Response(
+        content=json.dumps({
+            "name": "PitchSense — Match Intelligence",
+            "short_name": "PitchSense",
+            "description": "AI football match analysis, momentum charts and player ratings.",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#07090f",
+            "theme_color": "#07090f",
+            "orientation": "portrait-primary",
+            "icons": [
+                {"src": "/static/icon.svg", "sizes": "any",
+                 "type": "image/svg+xml", "purpose": "any maskable"}
+            ],
+        }),
+        media_type="application/manifest+json",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +407,101 @@ def fixtures(
     result = {"fixtures": cards[:40], "season": season}
     summary_cache.set(cache_key, result)
     return result
+
+
+def _derived(context: dict, fixture_id: int) -> dict:
+    """Momentum + stat deltas. Pure computation over cached data — no model,
+    no provider call, so it's regenerated freely on every request."""
+    out: dict = {}
+    teams_block = context["fixture"]["teams"]
+    home_id, away_id = teams_block["home"]["id"], teams_block["away"]["id"]
+    try:
+        out["momentum"] = momentum.build_timeline(context["events"], home_id, away_id)
+        out["momentum"]["caption"] = momentum.summarize_shift(out["momentum"])
+    except Exception:
+        logger.exception("Momentum build failed for fixture %s", fixture_id)
+    try:
+        comparisons = stats.build_comparisons(
+            context["team_statistics"], home_id, away_id
+        )
+        out["stat_comparisons"] = comparisons
+        out["headline_metrics"] = stats.headline_metrics(comparisons)
+    except Exception:
+        logger.exception("Stat comparison failed for fixture %s", fixture_id)
+    return out
+
+
+@app.get("/api/match/{fixture_id}/narrative")
+def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
+    """The Shockwave + Tactical halves, without waiting on player notes.
+
+    Generation time scales with output volume, and the ~32 per-player notes
+    dominate it. Splitting lets this land in roughly half the time so the UI
+    has something real to show while the player pass finishes.
+    """
+    cache_key = f"narr-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except api_service.FootballAPIError as exc:
+        logger.warning("Fixture %s unavailable: %s", fixture_id, exc)
+        raise _api_error(exc) from exc
+
+    with _paid_call(request, f"narrative {fixture_id}"):
+        logger.info("Generating narrative for fixture %s", fixture_id)
+        try:
+            narrative = ai_summarizer.generate_narrative(context)
+        except RuntimeError as exc:
+            logger.error("Narrative failed for %s: %s", fixture_id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    result = narrative.model_dump()
+    result.update(_derived(context, fixture_id))
+
+    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
+    if status in FINISHED_STATUSES:
+        summary_cache.set(cache_key, result)
+    return result
+
+
+@app.get("/api/match/{fixture_id}/players")
+def match_players(request: Request, fixture_id: int, refresh: bool = False):
+    """Per-player notes with headshots — the long half of the generation."""
+    cache_key = f"players-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key)
+        if cached is not None:
+            return _use_photo_proxy(cached)
+
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except api_service.FootballAPIError as exc:
+        raise _api_error(exc) from exc
+
+    with _paid_call(request, f"player notes {fixture_id}"):
+        logger.info("Generating player notes for fixture %s", fixture_id)
+        try:
+            notes = ai_summarizer.generate_player_pass(context)
+        except RuntimeError as exc:
+            logger.error("Player pass failed for %s: %s", fixture_id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    result = {"player_notes": notes.model_dump()["player_notes"]}
+    try:
+        result["player_notes"] = enrich.enrich_player_notes(
+            result["player_notes"], context
+        )
+    except Exception:
+        logger.exception("Player enrichment failed for fixture %s", fixture_id)
+
+    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
+    if status in FINISHED_STATUSES:
+        summary_cache.set(cache_key, result)
+    return _use_photo_proxy(result)
 
 
 @app.get("/api/match/{fixture_id}/summary")

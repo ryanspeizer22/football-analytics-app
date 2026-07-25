@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Dependencies first so edits to app code don't invalidate the layer.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Caches (summaries, match contexts, headshots) live here. Mount a volume at
+# this path in production — otherwise every deploy throws away paid analyses
+# and re-fetches provider data that counts against the daily quota.
+RUN mkdir -p /app/.cache
+VOLUME ["/app/.cache"]
+
+ENV PORT=8000
+EXPOSE 8000
+
+# --proxy-headers so request.client is the real caller behind a load balancer;
+# the rate limiter keys on it. Single worker keeps the in-process rate-limit
+# counters authoritative — see README before scaling out.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

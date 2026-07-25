@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PitchSense">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1420"/>
+      <stop offset="100%" stop-color="#060910"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5cffb4"/>
+      <stop offset="100%" stop-color="#1fb977"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- pitch arc -->
+  <ellipse cx="256" cy="430" rx="230" ry="70" fill="#1d5c3a" opacity="0.55"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#22e08d" stroke-width="10" opacity="0.28"/>
+  <!-- bolt -->
+  <path d="M286 96 L166 286 H236 L214 416 L346 214 H272 Z" fill="url(#bolt)"/>
+</svg>

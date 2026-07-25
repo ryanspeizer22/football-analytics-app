@@ -61,6 +61,22 @@ class MatchSummary(BaseModel):
     player_notes: list[PlayerNote]        # Layer 3 — notable performers
 
 
+class MatchNarrative(BaseModel):
+    """The Shockwave + Tactical halves — everything except player notes.
+
+    Split out because it is a fraction of the output volume and can therefore
+    be shown while the far longer per-player pass is still running.
+    """
+    headline: str
+    tldr: str
+    momentum_takeaways: list[str]
+    team_breakdowns: list[TeamBreakdown]
+
+
+class PlayerNotes(BaseModel):
+    player_notes: list[PlayerNote]
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -131,6 +147,71 @@ def generate_match_summary(match_context: dict[str, Any]) -> MatchSummary:
     if summary is None:
         raise RuntimeError("Failed to parse structured summary from model response.")
     return summary
+
+
+def _strip_players(match_context: dict[str, Any]) -> dict[str, Any]:
+    """Drop the per-player rows — ~14k of the ~39k input tokens.
+
+    The narrative pass reasons about the match, not individuals, so sending
+    every player's stat line only slows it down.
+    """
+    return {k: v for k, v in match_context.items() if k != "player_statistics"}
+
+
+def generate_narrative(match_context: dict[str, Any]) -> MatchNarrative:
+    """Generate the headline, TL;DR, momentum bullets and team breakdowns."""
+    response = _client().messages.parse(
+        model=MODEL,
+        max_tokens=8000,
+        system=[{"type": "text", "text": SYSTEM_PROMPT,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{
+            "role": "user",
+            "content": (
+                "Write the match narrative for a scannable dashboard:\n"
+                "- headline: 6-10 words, the match in one punchy line.\n"
+                "- momentum_takeaways: 3-4 bullets tracing how control shifted, "
+                "each naming the minute or passage that caused the swing.\n"
+                "- Per team, `verdict` is 3-6 words; `bullets` are 3-4 concrete "
+                "takeaways under ~14 words each; `narrative` is the fuller prose.\n"
+                "Bullets must not restate each other or the headline.\n\n"
+                f"Match data:\n{json.dumps(_strip_players(match_context), ensure_ascii=False)}"
+            ),
+        }],
+        output_format=MatchNarrative,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to summarize this match data.")
+    if response.parsed_output is None:
+        raise RuntimeError("Failed to parse narrative from model response.")
+    return response.parsed_output
+
+
+def generate_player_pass(match_context: dict[str, Any]) -> PlayerNotes:
+    """Generate the per-player notes — the long half of the output."""
+    response = _client().messages.parse(
+        model=MODEL,
+        max_tokens=16000,
+        system=[{"type": "text", "text": SYSTEM_PROMPT,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{
+            "role": "user",
+            "content": (
+                "Write one note per player who appeared, plus a short line for "
+                "unused substitutes. Copy each player's numeric `id` from the "
+                "player_statistics data verbatim into player_id — never invent "
+                "one. `rating_comment` is a short verdict; `detail` is 2-3 "
+                "sentences grounded in that player's numbers.\n\n"
+                f"Match data:\n{json.dumps(match_context, ensure_ascii=False)}"
+            ),
+        }],
+        output_format=PlayerNotes,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to summarize this match data.")
+    if response.parsed_output is None:
+        raise RuntimeError("Failed to parse player notes from model response.")
+    return response.parsed_output
 
 
 def generate_player_notes(player_season_stats: dict[str, Any]) -> str:

@@ -230,15 +230,34 @@ def get_team_league_fixtures(
     ).get("response", [])
 
 
-def build_match_context(fixture_id: int) -> dict[str, Any]:
+def build_match_context(fixture_id: int, use_cache: bool = True) -> dict[str, Any]:
     """Assemble everything the AI summarizer needs for one match in one call.
 
     Bundles fixture info, events, team stats, and player stats so the
     summarizer receives a single self-contained context dict.
+
+    A finished match's raw data never changes, so it's cached on disk: this
+    costs four provider calls the first time and zero on every regeneration.
+    With a 100/day allowance that is the difference between re-analysing a
+    match freely and burning a sixteenth of the daily budget to do it.
     """
-    return {
+    from services import summary_cache  # local import avoids a cycle
+
+    cache_key = f"context-{fixture_id}"
+    if use_cache:
+        cached = summary_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("Match context %s served from cache", fixture_id)
+            return cached
+
+    context = {
         "fixture": get_fixture(fixture_id),
         "events": get_fixture_events(fixture_id),
         "team_statistics": get_fixture_statistics(fixture_id),
         "player_statistics": get_fixture_player_stats(fixture_id),
     }
+    # Only cache a finished match — an in-play one is still changing.
+    status = (context["fixture"].get("fixture") or {}).get("status", {}).get("short")
+    if status in ("FT", "AET", "PEN"):
+        summary_cache.set(cache_key, context)
+    return context

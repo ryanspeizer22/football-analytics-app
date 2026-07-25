@@ -147,6 +147,59 @@ You need two (free-tier) keys in `.env`:
 
 Open <http://127.0.0.1:8000>, enter a fixture ID, and hit **Analyze**.
 
+## Deploying
+
+`Dockerfile` and `Procfile` are ready for any container or buildpack host
+(Fly, Railway, Render, Cloud Run). Two things must be set for a public deploy:
+
+```bash
+PITCHSENSE_BASE_URL=https://your-domain.example   # canonical + OpenGraph URLs
+FOOTBALL_API_KEY=...            # and ANTHROPIC_API_KEY
+```
+
+`PITCHSENSE_BASE_URL` is not cosmetic — canonical links, `sitemap.xml` and the
+OpenGraph image must be absolute URLs or crawlers and link unfurlers will
+ignore them.
+
+**Mount a volume at `/app/.cache`.** Without one, every deploy discards paid
+analyses and re-fetches provider data against the daily quota.
+
+**Run a single worker unless you move the rate limiter to Redis.** Its counters
+are per-process, so N workers means N× the intended spend ceiling.
+
+SEO surface: `robots.txt` (crawlers allowed on the shell, blocked from `/api/`),
+`sitemap.xml`, canonical/OpenGraph/Twitter tags, JSON-LD `WebApplication`, and
+a PWA manifest so iOS can install it to the home screen.
+
+## Generation performance
+
+Measured on a 40-player Premier League fixture (39,305 input tokens):
+
+| Strategy | Wall time | First content |
+|---|---|---|
+| Single combined call (original) | 58.1s | 58.1s |
+| Split + parallel (current) | ~45s | **~25s** |
+
+The bottleneck is **output volume, not thinking** — dropping effort from
+medium to low changed narrative time by 1.2s (26.2s vs 25.0s), because the
+model spends its time writing ~32 player notes. So the fix is structural: the
+narrative and player passes are independent, run concurrently, and the UI
+paints the narrative as soon as it lands while player cards show a skeleton.
+The narrative pass also drops the per-player rows from its input (39.3k → 25.5k
+tokens), since it reasons about the match, not individuals.
+
+Raw match context is cached to disk as well as the generated summaries, so a
+regeneration costs **zero** provider calls instead of four — material against a
+100/day allowance.
+
+> **Sub-10s for a full analysis is not reachable at this output volume.** A
+> complete report is several thousand output tokens and the model writes them
+> serially. What *is* reachable, and now true: cached matches serve in ~2ms,
+> and a cold match shows real content at ~25s instead of a 58s blank. Getting
+> the cold path materially below that needs either fewer player notes (only
+> notable performers), a faster model for the mechanical per-player pass, or
+> pre-generating a pool of popular fixtures in the background.
+
 ## Cost protection
 
 Generating a summary costs a model call (~1 minute); serving a cached one is
@@ -177,7 +230,9 @@ keep serving normally. Live budget state is on `GET /health`.
 | `GET /api/player-photo/{player_id}` | Same-origin headshot proxy (disk-cached) |
 | `GET /api/trending` | Pre-seeded iconic fixtures for the homepage grid |
 | `GET /api/fixtures?team1=&team2=` | Head-to-head or season fixtures for a team |
-| `GET /api/match/{fixture_id}/summary` | Three-layer AI match summary (JSON; `?refresh=true` to regenerate) |
+| `GET /api/match/{fixture_id}/narrative` | Headline, TL;DR, takeaways, team breakdowns, momentum, stat deltas |
+| `GET /api/match/{fixture_id}/players` | Per-player notes with headshots (the long half) |
+| `GET /api/match/{fixture_id}/summary` | Both halves combined (`?refresh=true` to regenerate) |
 | `GET /api/player/{player_id}/season?season=YYYY` | Aggregated season profile for the card drawer (no AI, cached) |
 | `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note (cached; `?refresh=true`) |
 | `GET /api/premium/tactical/{fixture_id}` | Premium tactical tier (placeholder) |
