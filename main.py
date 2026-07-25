@@ -26,6 +26,7 @@ import logging
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Optional
 
 import requests
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -40,8 +41,10 @@ from services import (
     enrich,
     leaderboard,
     momentum,
+    og_image,
     player_profile,
     rate_limit,
+    slugs,
     stats,
     summary_cache,
     teams,
@@ -113,6 +116,153 @@ BASE_URL = os.environ.get("PITCHSENSE_BASE_URL", "http://127.0.0.1:8000").rstrip
 async def home(request: Request):
     """Render the main dashboard shell; data loads client-side from the API."""
     return templates.TemplateResponse(request, "index.html", {"base_url": BASE_URL})
+
+
+def _shell(request: Request, *, title: str, description: str,
+           path: str, og_image: str, boot: Optional[dict] = None) -> HTMLResponse:
+    """Render the SPA shell with route-specific metadata.
+
+    Link unfurlers and crawlers never execute the page's JavaScript, so the
+    title/description/og:image for a shared URL have to be in the HTML that
+    comes back from the server — a client-side router alone would leave every
+    shared link showing the generic homepage card.
+    """
+    return templates.TemplateResponse(request, "index.html", {
+        "base_url": BASE_URL,
+        "meta_title": title,
+        "meta_description": description,
+        "canonical_path": path,
+        "og_image": og_image,
+        # Handed to the client so the view opens directly, without a round
+        # trip to work out what the URL meant. Rendered with `| safe`, because
+        # Jinja's HTML autoescaping would turn the JSON quotes into &#34; and
+        # break the whole script — so `<` is neutralised here instead, which
+        # is what actually matters inside a <script> block.
+        "boot_state": json.dumps(boot).replace("<", "\\u003c") if boot else None,
+    })
+
+
+@app.get("/match/{slug}", response_class=HTMLResponse)
+def match_page(request: Request, slug: str):
+    """Deep link to one match analysis."""
+    fixture_id = slugs.trailing_id(slug)
+    if fixture_id is None:
+        raise HTTPException(status_code=404, detail="Unknown match link.")
+
+    title, description = "Match analysis — PitchSense", "AI football match intelligence."
+    meta = summary_cache.get(f"meta-{fixture_id}")
+    if meta:
+        title = f"{meta['home']} {meta['home_score']}–{meta['away_score']} {meta['away']} — PitchSense"
+        description = meta.get("headline") or f"{meta['competition']}, {meta['date']}."
+
+    return _shell(
+        request, title=title, description=description,
+        path=f"/match/{slug}", og_image=f"{BASE_URL}/og/match/{fixture_id}.png",
+        boot={"view": "match", "fixture_id": fixture_id},
+    )
+
+
+@app.get("/compare/{slug}", response_class=HTMLResponse)
+def compare_page(request: Request, slug: str):
+    """Deep link to a head-to-head comparison."""
+    pair = slugs.parse_compare(slug)
+    if pair is None:
+        raise HTTPException(status_code=404, detail="Unknown comparison link.")
+    a_id, b_id = pair
+    return _shell(
+        request,
+        title="Head-to-head player comparison — PitchSense",
+        description="Compare two players' seasons side by side: ratings, goals, key passes and more.",
+        path=f"/compare/{slug}",
+        og_image=f"{BASE_URL}/og/compare/{a_id}-{b_id}.png",
+        boot={"view": "compare", "players": [a_id, b_id]},
+    )
+
+
+@app.get("/leaderboard/{slug}", response_class=HTMLResponse)
+def leaderboard_page(request: Request, slug: str, metric: str = Query("rating")):
+    parsed = slugs.parse_leaderboard(slug)
+    if parsed is None:
+        raise HTTPException(status_code=404, detail="Unknown leaderboard link.")
+    league_id, season = parsed
+    comp = competitions.get_competition(league_id)
+    name = comp["name"] if comp else "League"
+    return _shell(
+        request,
+        title=f"{name} {season}/{str(season + 1)[-2:]} player rankings — PitchSense",
+        description=f"Every player in {name} {season}/{str(season + 1)[-2:]}, ranked by rating, goals, key passes and defensive output.",
+        path=f"/leaderboard/{slug}",
+        og_image=f"{BASE_URL}/og/leaderboard/{league_id}-{season}.png",
+        boot={"view": "leaderboard", "league": league_id, "season": season, "metric": metric},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic OpenGraph images
+# ---------------------------------------------------------------------------
+
+_OG_HEADERS = {"Cache-Control": "public, max-age=86400"}
+
+
+@app.get("/og/match/{fixture_id}.png")
+def og_match(fixture_id: int):
+    """Branded preview card for a shared match link."""
+    cache_file = PHOTO_CACHE_DIR.parent / "og" / f"match-{fixture_id}.png"
+    if cache_file.exists():
+        return Response(cache_file.read_bytes(), media_type="image/png", headers=_OG_HEADERS)
+
+    meta = summary_cache.get(f"meta-{fixture_id}")
+    narrative = summary_cache.get(f"narr-{fixture_id}") or {}
+    if not meta:
+        png = og_image.generic_card("Match analysis", "PitchSense")
+    else:
+        png = og_image.match_card(
+            meta["home"], meta["away"], meta.get("home_score"), meta.get("away_score"),
+            meta.get("competition", ""), meta.get("date", ""),
+            meta.get("home_color", "#37f0a2"), meta.get("away_color", "#5078ff"),
+            narrative.get("headline", ""),
+        )
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_bytes(png)
+    return Response(png, media_type="image/png", headers=_OG_HEADERS)
+
+
+@app.get("/og/compare/{a_id}-{b_id}.png")
+def og_compare(a_id: int, b_id: int):
+    """Branded preview card for a shared comparison link."""
+    cache_file = PHOTO_CACHE_DIR.parent / "og" / f"cmp-{a_id}-{b_id}.png"
+    if cache_file.exists():
+        return Response(cache_file.read_bytes(), media_type="image/png", headers=_OG_HEADERS)
+
+    season = competitions.default_season()
+
+    def profile(pid: int):
+        return summary_cache.get(f"profile-{pid}-{season}")
+
+    a, b = profile(a_id), profile(b_id)
+    if a and b:
+        png = og_image.compare_card(
+            a["player"].get("name", ""), a.get("average_rating"), a["player"].get("team", ""),
+            b["player"].get("name", ""), b.get("average_rating"), b["player"].get("team", ""),
+            season,
+        )
+    else:
+        # Don't block the unfurl on an uncached profile — a provider round trip
+        # here would make the crawler wait, and crawlers time out fast.
+        png = og_image.generic_card("Head to head", "Compare two players on PitchSense")
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_bytes(png)
+    return Response(png, media_type="image/png", headers=_OG_HEADERS)
+
+
+@app.get("/og/leaderboard/{league_id}-{season}.png")
+def og_leaderboard(league_id: int, season: int):
+    comp = competitions.get_competition(league_id)
+    name = comp["name"] if comp else "League"
+    png = og_image.generic_card(
+        f"{name} {season}/{str(season + 1)[-2:]}", "Season player rankings · PitchSense"
+    )
+    return Response(png, media_type="image/png", headers=_OG_HEADERS)
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
@@ -460,6 +610,37 @@ def fixtures(
     return result
 
 
+def _store_match_meta(context: dict, fixture_id: int) -> None:
+    """Persist the few fields an OG card needs.
+
+    Kept separate from the summary caches so rendering a preview image never
+    depends on a generated analysis existing — a link can be shared the moment
+    a match is opened.
+    """
+    try:
+        fx = context["fixture"]
+        home, away = fx["teams"]["home"], fx["teams"]["away"]
+        home_color, away_color = teams.distinct_colors(home["id"], away["id"])
+        summary_cache.set(f"meta-{fixture_id}", {
+            "home": teams.display_name(home["id"], home["name"]),
+            "away": teams.display_name(away["id"], away["name"]),
+            "home_score": (fx.get("goals") or {}).get("home"),
+            "away_score": (fx.get("goals") or {}).get("away"),
+            "competition": (fx.get("league") or {}).get("name", ""),
+            "date": (fx.get("fixture") or {}).get("date", "")[:10],
+            "home_color": home_color,
+            "away_color": away_color,
+            "slug": slugs.match_slug(
+                teams.display_name(home["id"], home["name"]),
+                teams.display_name(away["id"], away["name"]),
+                fixture_id,
+                (fx.get("fixture") or {}).get("date", "")[:10],
+            ),
+        })
+    except Exception:
+        logger.exception("Failed to store OG metadata for fixture %s", fixture_id)
+
+
 def _derived(context: dict, fixture_id: int) -> dict:
     """Momentum + stat deltas. Pure computation over cached data — no model,
     no provider call, so it's regenerated freely on every request."""
@@ -482,6 +663,24 @@ def _derived(context: dict, fixture_id: int) -> dict:
     return out
 
 
+@app.get("/api/match/{fixture_id}/meta")
+def match_meta(fixture_id: int):
+    """Scoreline and colours for a match, without generating anything.
+
+    A shared link arrives with no card object, so the client needs this to
+    paint the scoreboard before (or without) any analysis.
+    """
+    cached = summary_cache.get(f"meta-{fixture_id}")
+    if cached is not None:
+        return cached
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except api_service.FootballAPIError as exc:
+        raise _api_error(exc) from exc
+    _store_match_meta(context, fixture_id)
+    return summary_cache.get(f"meta-{fixture_id}") or {}
+
+
 @app.get("/api/match/{fixture_id}/narrative")
 def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
     """The Shockwave + Tactical halves, without waiting on player notes.
@@ -501,6 +700,8 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
     except api_service.FootballAPIError as exc:
         logger.warning("Fixture %s unavailable: %s", fixture_id, exc)
         raise _api_error(exc) from exc
+
+    _store_match_meta(context, fixture_id)
 
     with _paid_call(request, f"narrative {fixture_id}"):
         logger.info("Generating narrative for fixture %s", fixture_id)

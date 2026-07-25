@@ -175,6 +175,37 @@ SEO surface: `robots.txt` (crawlers allowed on the shell, blocked from `/api/`),
 `sitemap.xml`, canonical/OpenGraph/Twitter tags, JSON-LD `WebApplication`, and
 a PWA manifest so iOS can install it to the home screen.
 
+## Shareable URLs & link previews
+
+Every view has a readable address, and the address *is* the state — open it
+anywhere and you get the same screen:
+
+```
+/match/liverpool-vs-man-united-2023-03-05-868201
+/compare/bruno-fernandes-1234-vs-jeremy-doku-5678
+/leaderboard/premier-league-2025?metric=key_passes
+```
+
+The id is the last segment of every slug. Names are ambiguous and change — two
+Brunos in one match, a club renaming, a typo'd share — so the readable part is
+decoration and the trailing id is the source of truth. A link stays valid even
+when the prose part goes stale.
+
+**Slug routes are server-rendered.** Link unfurlers and crawlers don't execute
+JavaScript, so `/match/...` returns HTML already carrying that match's title,
+description and `og:image`. A purely client-side router would leave every
+shared link showing the generic homepage card.
+
+`/og/match/{id}.png`, `/og/compare/{a}-{b}.png` and `/og/leaderboard/{id}-{season}.png`
+compose branded 1200×630 cards with Pillow — stadium backdrop, club-colour
+split bar, scoreline and headline — cached to disk after first render.
+
+> Two portability traps worth knowing if you touch this: the container has **no
+> fonts**, so `Dockerfile` installs `fonts-dejavu-core` and the renderer walks a
+> candidate list (Pillow silently falls back to a tiny bitmap font otherwise);
+> and the boot state is injected with `| safe`, because Jinja's HTML
+> autoescaping turns JSON quotes into `&#34;` and breaks the entire script.
+
 ## Leaderboard & comparison
 
 **🏅 Global Leaderboard** ranks every player in a competition-season across
