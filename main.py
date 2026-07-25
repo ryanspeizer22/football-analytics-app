@@ -28,7 +28,14 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from services import ai_summarizer, api_service, rate_limit, summary_cache, teams
+from services import (
+    ai_summarizer,
+    api_service,
+    competitions,
+    rate_limit,
+    summary_cache,
+    teams,
+)
 from services.trending import TRENDING
 
 logging.basicConfig(
@@ -92,13 +99,42 @@ async def home(request: Request):
 # Fixture status codes that mean the match is over and its summary is final.
 FINISHED_STATUSES = {"FT", "AET", "PEN"}
 
-# API-Football free tier only serves seasons 2021-2023.
-SUPPORTED_SEASONS = range(2021, 2024)
+
+def _season_window() -> range:
+    """Seasons this subscription can actually read (inclusive of both ends)."""
+    lo, hi = competitions.plan_window()
+    return range(lo, hi + 1)
+
+
+def _api_error(exc: Exception) -> HTTPException:
+    """Map a provider failure onto an HTTP response the UI can explain.
+
+    A blocked season and a spent quota are ordinary, recoverable states — they
+    get their own status codes so the frontend can say something useful rather
+    than showing a generic failure.
+    """
+    if isinstance(exc, api_service.SeasonUnavailableError):
+        lo, hi = competitions.plan_window()
+        return HTTPException(
+            status_code=409,
+            detail=(
+                f"That season isn't available on the current API-Football plan. "
+                f"Seasons {lo}–{hi} are covered. ({exc})"
+            ),
+        )
+    if isinstance(exc, api_service.QuotaExhaustedError):
+        return HTTPException(status_code=429, detail=str(exc),
+                             headers={"Retry-After": "3600"})
+    return HTTPException(status_code=502, detail=str(exc))
 
 
 def _fixture_card(f: dict) -> dict:
     """Map a raw API-Football fixture to the compact card shape the UI renders."""
     home, away = f["teams"]["home"], f["teams"]["away"]
+    # Adopt unknown clubs so dynamically discovered teams get a real palette
+    # instead of all rendering in the same fallback gray.
+    teams.ensure_team(home["id"], home["name"], home.get("logo"))
+    teams.ensure_team(away["id"], away["name"], away.get("logo"))
     home_color, away_color = teams.distinct_colors(home["id"], away["id"])
     return {
         "fixture_id": f["fixture"]["id"],
@@ -122,10 +158,10 @@ def _fixture_card(f: dict) -> dict:
 
 
 def _summarizable(f: dict) -> bool:
-    """Finished and inside the free-tier season window."""
+    """Finished, and in a season this subscription can actually fetch."""
     return (
         f["fixture"]["status"]["short"] in FINISHED_STATUSES
-        and f["league"]["season"] in SUPPORTED_SEASONS
+        and f["league"]["season"] in _season_window()
     )
 
 
@@ -135,8 +171,82 @@ def _summarizable(f: dict) -> bool:
 
 @app.get("/api/search")
 def search(q: str = Query(..., min_length=1, max_length=80)):
-    """Autocomplete: match team names/aliases locally; understands 'A vs B'."""
-    return teams.parse_query(q)
+    """Universal autocomplete across teams, matchups, and competitions.
+
+    Teams resolve against the curated registry first and fall back to a live
+    provider lookup, so any club in a covered competition is reachable.
+    """
+    result = teams.parse_query(q)
+    result["competitions"] = competitions.search(q)
+    return result
+
+
+@app.get("/api/competitions")
+def list_competitions():
+    """Every tracked competition, annotated with the seasons this plan can read."""
+    lo, hi = competitions.plan_window()
+    return {
+        "competitions": competitions.public_list(),
+        "plan_window": {"min_season": lo, "max_season": hi},
+        "default_season": competitions.default_season(),
+    }
+
+
+@app.get("/api/competitions/{competition_id}/fixtures")
+def competition_fixtures(
+    competition_id: int,
+    season: int = Query(None),
+    team: int = Query(None),
+):
+    """Fixtures for a competition/season, resolved live and cached.
+
+    This is the core of dynamic ingestion: any tracked competition can be
+    browsed on demand without a hardcoded fixture list.
+    """
+    comp = competitions.get_competition(competition_id)
+    if comp is None:
+        raise HTTPException(status_code=404, detail="Unknown competition.")
+
+    season = season or competitions.default_season(competition_id)
+    reachable = competitions.accessible_seasons(competition_id)
+    if reachable and season not in reachable:
+        lo, hi = competitions.plan_window()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{comp['name']} {season}/{str(season + 1)[-2:]} isn't on the current "
+                f"API-Football plan. Available: {', '.join(map(str, reachable))} "
+                f"(plan covers {lo}–{hi})."
+            ),
+        )
+
+    cache_key = f"comp-{competition_id}-{season}" + (f"-t{team}" if team else "")
+    cached = summary_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        if team:
+            raw = api_service.get_team_league_fixtures(team, competition_id, season)
+        else:
+            raw = api_service.get_league_fixtures(competition_id, season)
+    except api_service.FootballAPIError as exc:
+        logger.warning("Competition %s/%s fetch failed: %s", competition_id, season, exc)
+        raise _api_error(exc) from exc
+
+    cards = [_fixture_card(f) for f in raw if _summarizable(f)]
+    cards.sort(key=lambda c: c["date"], reverse=True)
+    result = {
+        "competition": {
+            "id": comp["id"], "name": comp["name"], "emoji": comp["emoji"],
+        },
+        "season": season,
+        "available_seasons": reachable,
+        "count": len(cards),
+        "fixtures": cards[:60],
+    }
+    summary_cache.set(cache_key, result)
+    return result
 
 
 @app.get("/api/trending")
@@ -146,10 +256,17 @@ def trending():
 
 
 @app.get("/api/fixtures")
-def fixtures(team1: int = Query(...), team2: int = Query(None)):
-    """List summarizable fixtures: head-to-head if two teams, else recent
-    matches for one team. Responses are cached to protect the API quota."""
-    cache_key = f"fixtures-{team1}-{team2}" if team2 else f"fixtures-{team1}"
+def fixtures(
+    team1: int = Query(...),
+    team2: int = Query(None),
+    season: int = Query(None),
+):
+    """List summarizable fixtures: head-to-head if two teams, else a team's
+    season. Responses are cached to protect the provider quota."""
+    season = season or competitions.default_season()
+    cache_key = (
+        f"fixtures-{team1}-{team2}" if team2 else f"fixtures-{team1}-s{season}"
+    )
     cached = summary_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -158,14 +275,14 @@ def fixtures(team1: int = Query(...), team2: int = Query(None)):
         if team2:
             raw = api_service.get_head_to_head(team1, team2)
         else:
-            # Most recent supported season's fixtures for the team.
-            raw = api_service.get_team_season_fixtures(team1, SUPPORTED_SEASONS[-1])
+            raw = api_service.get_team_season_fixtures(team1, season)
     except api_service.FootballAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("Fixture lookup failed (team=%s): %s", team1, exc)
+        raise _api_error(exc) from exc
 
     cards = [_fixture_card(f) for f in raw if _summarizable(f)]
     cards.sort(key=lambda c: c["date"], reverse=True)
-    result = {"fixtures": cards[:20]}
+    result = {"fixtures": cards[:40], "season": season}
     summary_cache.set(cache_key, result)
     return result
 
@@ -297,5 +414,11 @@ def premium_tactical(fixture_id: int):
 
 @app.get("/health")
 def health():
-    """Liveness plus the current AI-spend budget, for monitoring."""
-    return {"status": "ok", "budget": rate_limit.snapshot()}
+    """Liveness plus AI-spend budget and provider quota, for monitoring."""
+    lo, hi = competitions.plan_window()
+    return {
+        "status": "ok",
+        "budget": rate_limit.snapshot(),
+        "football_api_quota": api_service.quota_snapshot(),
+        "seasons": {"min": lo, "max": hi, "default": competitions.default_season()},
+    }

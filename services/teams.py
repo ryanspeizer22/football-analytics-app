@@ -9,6 +9,7 @@ Coverage: 2023-24 Premier League plus the European giants and the two
 World Cup finalists (everything the trending grid and free-tier data reach).
 """
 
+import re
 from typing import Any, Optional
 
 # Compact names for the card UI — full names overflow narrow score cards.
@@ -175,10 +176,140 @@ def _matches(team: dict[str, Any], q: str) -> bool:
 def search_teams(query: str, limit: int = 6) -> list[dict[str, Any]]:
     """Local prefix/word match against names, short codes, and aliases."""
     hits = [t for t in TEAMS if _matches(t, query)]
-    return [{k: t[k] for k in ("id", "name", "short", "color", "color2")} for t in hits[:limit]]
+    return [_public(t) for t in hits[:limit]]
 
 
 _VS_SEPARATORS = [" vs ", " v ", " versus ", " - ", " x "]
+
+
+# --- Dynamic resolution for teams outside the curated registry --------------
+
+_GENERATED_PALETTE = [
+    "#E4572E", "#17BEBB", "#FFC914", "#76B041", "#9B5DE5",
+    "#F15BB5", "#00BBF9", "#F79824", "#4CB944", "#EF6461",
+]
+
+
+def _generated_colors(team_id: int, name: str) -> tuple[str, str]:
+    """Deterministic brand colors for a team we have no palette for.
+
+    Keyed on the team id so a club always renders the same color, and drawn
+    from a pre-vetted palette so every result stays readable on the dark UI.
+    """
+    primary = _GENERATED_PALETTE[team_id % len(_GENERATED_PALETTE)]
+    secondary = _GENERATED_PALETTE[(team_id // 7 + 3) % len(_GENERATED_PALETTE)]
+    if secondary == primary:
+        secondary = _GENERATED_PALETTE[(team_id + 5) % len(_GENERATED_PALETTE)]
+    return primary, secondary
+
+
+def ensure_team(team_id: int, name: str, logo: Optional[str] = None) -> dict[str, Any]:
+    """Return the registry entry for a team, creating one if it's unknown.
+
+    Universal ingestion surfaces clubs far outside the curated set; without
+    this they'd all render in the same neutral gray, so every discovered team
+    gets a stable generated palette on first sight.
+    """
+    existing = _BY_ID.get(team_id)
+    if existing:
+        return existing
+    return register_api_team({"team": {"id": team_id, "name": name, "logo": logo}})
+
+
+def register_api_team(raw: dict[str, Any]) -> dict[str, Any]:
+    """Adopt a team from an API `/teams` result into the in-memory registry.
+
+    Lets a club we've never seen behave exactly like a curated one for the
+    rest of the process's life — colors, display name, and future lookups.
+    """
+    team_info = raw.get("team", raw)
+    tid = team_info.get("id")
+    name = team_info.get("name") or ""
+    if tid is None or not name:
+        raise ValueError("API team payload missing id/name")
+
+    existing = _BY_ID.get(tid)
+    if existing:
+        return existing
+
+    color, color2 = _generated_colors(tid, name)
+    entry = {
+        "id": tid,
+        "name": name,
+        "short": (team_info.get("code") or name[:3]).upper(),
+        "color": color,
+        "color2": color2,
+        "aliases": [],
+        "logo": team_info.get("logo"),
+        "generated": True,
+    }
+    TEAMS.append(entry)
+    _BY_ID[tid] = entry
+    return entry
+
+
+def _public(team: dict[str, Any]) -> dict[str, Any]:
+    out = {k: team[k] for k in ("id", "name", "short", "color", "color2")}
+    out["generated"] = team.get("generated", False)
+    return out
+
+
+# Youth, women's, and reserve sides share their club's name and would other-
+# wise crowd out the senior team. Every competition PitchSense tracks is a
+# senior men's competition, so these are filtered from discovery results.
+_NON_SENIOR = re.compile(
+    r"(\bwomen\b|\bfeminin\w*\b|\bladies\b|\s+(w|u\d{2}|ii|iii|b)$)",
+    re.IGNORECASE,
+)
+
+
+def _is_senior_side(name: str) -> bool:
+    return not _NON_SENIOR.search(name or "")
+
+
+def _relevance(name: str, query: str) -> int:
+    """Rank: exact match, then prefix, then substring. Lower sorts first."""
+    n, q = name.lower(), query.lower().strip()
+    if n == q:
+        return 0
+    if n.startswith(q):
+        return 1
+    return 2
+
+
+def resolve_teams(query: str, limit: int = 6) -> list[dict[str, Any]]:
+    """Find teams for a query: curated registry first, live API as fallback.
+
+    Keeping the local pass first means common searches cost no API quota; the
+    remote lookup only runs for clubs outside the curated set.
+    """
+    local = search_teams(query, limit=limit)
+    if local:
+        return local
+
+    # Import here to avoid a circular import at module load.
+    from services import api_service
+
+    try:
+        remote = api_service.search_teams_api(query)
+    except api_service.FootballAPIError:
+        return []  # discovery is best-effort; never break the search box
+
+    candidates = [
+        raw for raw in remote
+        if _is_senior_side((raw.get("team") or {}).get("name", ""))
+    ]
+    candidates.sort(
+        key=lambda raw: _relevance((raw["team"]).get("name", ""), query)
+    )
+
+    resolved = []
+    for raw in candidates[:limit]:
+        try:
+            resolved.append(_public(register_api_team(raw)))
+        except ValueError:
+            continue
+    return resolved
 
 
 def parse_query(query: str) -> dict[str, Any]:
@@ -190,9 +321,9 @@ def parse_query(query: str) -> dict[str, Any]:
     for sep in _VS_SEPARATORS:
         if sep in q:
             left, right = q.split(sep, 1)
-            team1 = search_teams(left, limit=1)
-            team2 = search_teams(right, limit=1)
+            team1 = resolve_teams(left, limit=1)
+            team2 = resolve_teams(right, limit=1)
             if team1 and team2 and team1[0]["id"] != team2[0]["id"]:
                 return {"teams": [], "matchup": {"team1": team1[0], "team2": team2[0]}}
             break  # separator present but couldn't resolve both sides
-    return {"teams": search_teams(q), "matchup": None}
+    return {"teams": resolve_teams(q), "matchup": None}

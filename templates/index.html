@@ -162,6 +162,47 @@
     }
     .section-head .line { flex: 1; height: 1px; background: linear-gradient(90deg, var(--border-bright), transparent); }
 
+    /* ===== Competition rail ===== */
+    .comp-group { margin-bottom: 1.1rem; }
+    .comp-group-label {
+      font-size: 0.66rem; font-weight: 800; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--text-dim); margin-bottom: 0.5rem;
+    }
+    .comp-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .comp-chip {
+      display: flex; align-items: center; gap: 0.5rem;
+      background: var(--glass); border: 1px solid var(--border);
+      border-radius: 11px; padding: 0.5rem 0.9rem;
+      color: var(--text); font-family: var(--font); font-size: 0.85rem; font-weight: 600;
+      cursor: pointer; backdrop-filter: blur(8px);
+      transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .comp-chip:hover {
+      transform: translateY(-2px); border-color: var(--neon);
+      box-shadow: 0 0 20px var(--neon-soft);
+    }
+    .comp-chip .emoji { font-size: 1rem; }
+    .comp-chip .season-hint { color: var(--text-dim); font-size: 0.7rem; font-weight: 500; }
+    .comp-chip[disabled] { opacity: 0.4; cursor: not-allowed; }
+    .comp-chip[disabled]:hover { transform: none; border-color: var(--border); box-shadow: none; }
+
+    /* ===== Season selector ===== */
+    .season-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+    .season-pill {
+      background: var(--glass); border: 1px solid var(--border); border-radius: 999px;
+      color: var(--text-dim); font-family: var(--font); font-weight: 700; font-size: 0.75rem;
+      padding: 0.35rem 0.85rem; cursor: pointer; transition: all 0.15s;
+    }
+    .season-pill:hover { color: var(--text); border-color: var(--border-bright); }
+    .season-pill.active {
+      color: #04130b; background: var(--neon); border-color: var(--neon);
+      box-shadow: 0 0 16px rgba(55, 240, 162, 0.4);
+    }
+    .notice {
+      border-color: rgba(240, 196, 55, 0.4); background: rgba(240, 196, 55, 0.06);
+      color: var(--premium); text-align: center; padding: 1.4rem;
+    }
+
     /* ===== Match cards (trending + select) ===== */
     .match-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
@@ -455,6 +496,9 @@
         <p>AI-forged breakdowns of legendary fixtures — from a 10-second shockwave recap to player-by-player battle reports.</p>
       </div>
 
+      <div class="section-head"><h2>🌍 Browse Competitions</h2><div class="line"></div></div>
+      <div id="competition-rail"></div>
+
       <div class="section-head"><h2>🔥 Trending &amp; Iconic</h2><div class="line"></div></div>
       <div class="match-grid" id="trending-grid"></div>
     </section>
@@ -463,6 +507,7 @@
     <section id="view-select" class="view">
       <button class="back-btn" data-back>← Back</button>
       <div class="section-head"><h2 id="select-title">⚔️ Choose Your Battle</h2><div class="line"></div></div>
+      <div class="season-bar" id="season-bar"></div>
       <div class="match-grid" id="select-grid"></div>
     </section>
 
@@ -608,6 +653,97 @@
       }
     })();
 
+    /* =========================== Competitions =========================== */
+    let competitions = [];
+
+    (async function initCompetitions() {
+      const rail = $("competition-rail");
+      try {
+        const data = await (await fetch("/api/competitions")).json();
+        competitions = data.competitions;
+
+        // Group by kind, preserving the server's ordering within each group.
+        const groups = new Map();
+        for (const c of competitions) {
+          if (!groups.has(c.kind_label)) groups.set(c.kind_label, []);
+          groups.get(c.kind_label).push(c);
+        }
+
+        rail.innerHTML = [...groups.entries()].map(([label, comps]) => `
+          <div class="comp-group">
+            <div class="comp-group-label">${esc(label)}</div>
+            <div class="comp-chips">
+              ${comps.map((c) => `
+                <button class="comp-chip" data-comp="${c.id}" ${c.available ? "" : "disabled"}
+                        title="${c.available ? "Seasons: " + c.seasons.join(", ") : "Not available on the current plan"}">
+                  <span class="emoji">${esc(c.emoji)}</span>
+                  <span>${esc(c.name)}</span>
+                  ${c.default_season ? `<span class="season-hint">${seasonLabel(c.default_season)}</span>` : ""}
+                </button>`).join("")}
+            </div>
+          </div>`).join("");
+
+        rail.querySelectorAll(".comp-chip[data-comp]").forEach((chip) =>
+          chip.addEventListener("click", () => {
+            if (chip.hasAttribute("disabled")) return;
+            openCompetition(+chip.dataset.comp);
+          })
+        );
+      } catch {
+        rail.innerHTML = `<div class="card error-box">Couldn't load competitions.</div>`;
+      }
+    })();
+
+    function seasonLabel(year) {
+      return `${year}/${String(year + 1).slice(-2)}`;
+    }
+
+    let currentComp = null;
+    async function openCompetition(compId, season) {
+      const comp = competitions.find((c) => c.id === compId);
+      if (!comp) return;
+      currentComp = comp;
+      const target = season || comp.default_season;
+
+      $("select-title").textContent = `${comp.emoji} ${comp.name} ${seasonLabel(target)}`;
+      renderSeasonBar(comp, target);
+      $("select-grid").innerHTML =
+        `<div class="loader" style="grid-column:1/-1"><div class="radar"></div>
+         <div class="hype">Ingesting ${esc(comp.name)}…</div>
+         <div class="hype-sub">Resolving the ${seasonLabel(target)} fixture list</div></div>`;
+      showView("select");
+
+      try {
+        const res = await fetch(`/api/competitions/${compId}/fixtures?season=${target}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+        selectMatches = data.fixtures;
+        if (!selectMatches.length) {
+          $("select-grid").innerHTML =
+            `<div class="card notice" style="grid-column:1/-1">No finished fixtures yet for ${esc(comp.name)} ${seasonLabel(target)}.</div>`;
+          return;
+        }
+        $("select-title").textContent =
+          `${comp.emoji} ${comp.name} ${seasonLabel(target)} — ${data.count} matches`;
+        $("select-grid").innerHTML = selectMatches.map(matchCardHTML).join("");
+        bindMatchCards($("select-grid"), selectMatches);
+      } catch (err) {
+        $("select-grid").innerHTML =
+          `<div class="card notice" style="grid-column:1/-1">${esc(err.message)}</div>`;
+      }
+    }
+
+    function renderSeasonBar(comp, active) {
+      const bar = $("season-bar");
+      if (!comp || !comp.seasons.length) { bar.innerHTML = ""; return; }
+      bar.innerHTML = comp.seasons.map((s) =>
+        `<button class="season-pill ${s === active ? "active" : ""}" data-season="${s}">${seasonLabel(s)}</button>`
+      ).join("");
+      bar.querySelectorAll(".season-pill").forEach((pill) =>
+        pill.addEventListener("click", () => openCompetition(comp.id, +pill.dataset.season))
+      );
+    }
+
     /* =========================== Smart search =========================== */
     const searchInput = $("search");
     const drop = $("search-drop");
@@ -654,21 +790,33 @@
           <button class="drop-item" data-t1="${t.id}" data-label="${esc(t.name)}">
             <span class="team-dot" style="color:${esc(t.color)};background:${esc(t.color)}"></span>
             <strong>${esc(t.name)}</strong>
-            <span class="sub">recent matches →</span>
+            <span class="sub">${t.generated ? "discovered" : "recent matches"} →</span>
           </button>`;
       }
-      drop.innerHTML = html || `<div class="drop-empty">No teams found — try "Arsenal" or "Liverpool vs Man United"</div>`;
+      for (const c of data.competitions || []) {
+        html += `
+          <button class="drop-item" data-comp="${c.id}">
+            <span class="emoji">${esc(c.emoji)}</span>
+            <strong>${esc(c.name)}</strong>
+            <span class="sub">${c.available ? "browse season →" : "not on this plan"}</span>
+          </button>`;
+      }
+      drop.innerHTML = html || `<div class="drop-empty">Nothing found — try "Arsenal", "Liverpool vs Man United", or "Serie A"</div>`;
       drop.classList.add("open");
       drop.querySelectorAll(".drop-item").forEach((item) =>
-        item.addEventListener("click", () =>
-          openFixtureList(item.dataset.t1, item.dataset.t2 || null, item.dataset.label))
+        item.addEventListener("click", () => {
+          drop.classList.remove("open");
+          searchInput.value = "";
+          if (item.dataset.comp) openCompetition(+item.dataset.comp);
+          else openFixtureList(item.dataset.t1, item.dataset.t2 || null, item.dataset.label);
+        })
       );
     }
 
     let selectMatches = [];
     async function openFixtureList(t1, t2, label) {
-      drop.classList.remove("open");
-      searchInput.value = "";
+      currentComp = null;
+      $("season-bar").innerHTML = "";  // team view has no per-competition seasons
       $("select-title").textContent = `⚔️ ${label} — Choose Your Battle`;
       $("select-grid").innerHTML = `<div class="loader" style="grid-column:1/-1"><div class="radar"></div><div class="hype">Pulling the archives…</div></div>`;
       showView("select");

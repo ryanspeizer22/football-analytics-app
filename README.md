@@ -15,11 +15,44 @@ structure, turning points) is stubbed out as a future premium feature.
 
 ## Interface
 
-- **Smart search** — type a team (`Arsenal`, `spurs`, `barca`) or a matchup
-  (`Liverpool vs Man United`) for instant autocomplete. Matching runs against a
-  local team registry, so typing never burns API quota. Press `/` to focus.
+- **Universal search** — type a team (`Arsenal`, `spurs`, `barca`), a matchup
+  (`Liverpool vs Man United`), or a competition (`Serie A`, `champions`). The
+  curated registry answers instantly and for free; anything outside it falls
+  back to a live provider lookup, so any club in a covered competition is
+  reachable. Press `/` to focus.
+- **Competition browser** — all 17 tracked competitions (top-5 leagues, their
+  domestic cups, the three UEFA club competitions, and the major international
+  tournaments) with per-competition season selection.
 - **Trending & Iconic grid** — pre-seeded legendary fixtures (the 2022 World Cup
   final, Liverpool 7–0 United, City 4–0 Madrid) for zero-friction entry.
+
+## Dynamic ingestion & seasons
+
+There is no hardcoded fixture list: competitions and their fixtures are
+resolved live and then cached. Two different notions of "available season" are
+tracked, and conflating them is what causes dead-end searches:
+
+- **Season exists** — per the provider's `/leagues` data (through 2026).
+- **Season is readable** — what *your subscription* may request.
+
+The effective set is the intersection, so the UI only ever offers seasons that
+actually return data. A blocked season returns `409` naming the seasons that
+*are* covered, rather than an empty grid.
+
+> **Current plan limit:** an API-Football **Free** plan covers seasons
+> **2022–2024** and 100 requests/day, so the newest reachable campaign is
+> 24/25. The 25/26 season requires a paid tier.
+
+Season targeting is configuration, not code — after upgrading the plan:
+
+```bash
+PITCHSENSE_MAX_SEASON=2026   # newest season the plan allows
+PITCHSENSE_SEASON=2025       # season the UI targets (25/26)
+```
+
+Provider quota is read from the API's own response headers, guarded with a
+reserve so discovery calls can't strand an in-flight analysis, and reported on
+`GET /health`.
 - **Team-reactive theming** — each match paints the page with its clubs' colors.
   Near-black kits are lightened and same-colored derbies fall back to a
   secondary color so the coding always stays readable.
@@ -82,9 +115,11 @@ keep serving normally. Live budget state is on `GET /health`.
 | Route | Description |
 |---|---|
 | `GET /` | Dashboard UI |
-| `GET /api/search?q=` | Team/matchup autocomplete (local, no API call) |
+| `GET /api/search?q=` | Universal autocomplete: teams, matchups, competitions |
+| `GET /api/competitions` | Tracked competitions + seasons this plan can read |
+| `GET /api/competitions/{id}/fixtures?season=` | Live fixture ingestion for a competition/season |
 | `GET /api/trending` | Pre-seeded iconic fixtures for the homepage grid |
-| `GET /api/fixtures?team1=&team2=` | Head-to-head or recent fixtures for a team |
+| `GET /api/fixtures?team1=&team2=` | Head-to-head or season fixtures for a team |
 | `GET /api/match/{fixture_id}/summary` | Three-layer AI match summary (JSON; `?refresh=true` to regenerate) |
 | `GET /api/player/{player_id}/stats?season=YYYY` | Season stats + AI scouting note (cached; `?refresh=true`) |
 | `GET /api/premium/tactical/{fixture_id}` | Premium tactical tier (placeholder) |
@@ -97,7 +132,9 @@ keep serving normally. Live budget state is on `GET /health`.
 ├── services/
 │   ├── api_service.py       # API-Football client (swap providers here)
 │   ├── ai_summarizer.py     # Claude summarization (3 layers, structured output)
-│   ├── teams.py             # Team registry: aliases, brand colors, search
+│   ├── teams.py             # Team registry + live discovery, colors, search
+│   ├── competitions.py      # Competition registry & season resolution
+│   ├── competitions_data.json  # Verified competition IDs + season coverage
 │   ├── trending.py          # Pre-seeded iconic fixtures
 │   ├── summary_cache.py     # Memory + disk cache for generated summaries
 │   └── rate_limit.py        # Per-client / daily / concurrency cost guards
