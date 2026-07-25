@@ -23,9 +23,12 @@ load_dotenv()
 
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 
+import requests
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from services import (
@@ -53,6 +56,13 @@ app = FastAPI(
 )
 
 templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Player headshots are proxied rather than hotlinked: serving them same-origin
+# keeps them out of reach of third-party-media blockers, and the on-disk cache
+# means a given player is fetched from the provider CDN at most once.
+PHOTO_CACHE_DIR = Path(".cache/photos")
+PHOTO_CDN = "https://media.api-sports.io/football/players/{player_id}.png"
 
 
 def _client_id(request: Request) -> str:
@@ -161,6 +171,19 @@ def _fixture_card(f: dict) -> dict:
     }
 
 
+def _use_photo_proxy(summary: dict) -> dict:
+    """Point player photos at the same-origin proxy.
+
+    Applied on the way out so summaries cached before the proxy existed pick
+    it up too, rather than needing a paid regeneration.
+    """
+    for note in summary.get("player_notes") or []:
+        pid = note.get("player_id")
+        if isinstance(pid, int) and pid > 0:
+            note["photo"] = f"/api/player-photo/{pid}"
+    return summary
+
+
 def _summarizable(f: dict) -> bool:
     """Finished, and in a season this subscription can actually fetch."""
     return (
@@ -253,6 +276,44 @@ def competition_fixtures(
     return result
 
 
+@app.get("/api/player-photo/{player_id}")
+def player_photo(player_id: int):
+    """Serve a player headshot same-origin, caching it on first request.
+
+    Hotlinking the provider CDN made rendering dependent on a third-party
+    host that privacy extensions commonly block; proxying removes that
+    failure mode and costs no football-API quota (the media CDN is separate).
+    """
+    if player_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid player id.")
+
+    cached = PHOTO_CACHE_DIR / f"{player_id}.png"
+    if cached.exists():
+        return Response(
+            content=cached.read_bytes(),
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=604800"},
+        )
+
+    try:
+        resp = requests.get(PHOTO_CDN.format(player_id=player_id), timeout=10)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        logger.info("Headshot unavailable for player %s: %s", player_id, exc)
+        raise HTTPException(status_code=404, detail="Headshot unavailable.") from exc
+
+    if not resp.headers.get("content-type", "").startswith("image/"):
+        raise HTTPException(status_code=404, detail="Headshot unavailable.")
+
+    PHOTO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(resp.content)
+    return Response(
+        content=resp.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
+
+
 @app.get("/api/trending")
 def trending():
     """Pre-seeded legendary fixtures for the homepage grid."""
@@ -306,7 +367,7 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return _use_photo_proxy(cached)
 
     try:
         context = api_service.build_match_context(fixture_id)
@@ -353,7 +414,7 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
     else:
         logger.info("Fixture %s not final (%s) — not cached", fixture_id, status)
 
-    return result
+    return _use_photo_proxy(result)
 
 
 # ---------------------------------------------------------------------------

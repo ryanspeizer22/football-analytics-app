@@ -113,7 +113,10 @@ def enrich_player_notes(
             continue
 
         note["player_id"] = player["id"]
-        note["photo"] = player["photo"]
+        # Same-origin proxy URL rather than the provider CDN — see the
+        # /api/player-photo route for why.
+        note["photo"] = f"/api/player-photo/{player['id']}"
+        note["photo_origin"] = player["photo"]
         note["position"] = player["position"]
         note["number"] = player["number"]
         note["minutes"] = player["minutes"]

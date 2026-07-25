@@ -28,13 +28,19 @@ structure, turning points) is stubbed out as a future premium feature.
 
 ## Visual system
 
-- **Stadium atmosphere** — tiered stands, cantilever roof, floodlight beams and
-  pitch glow, drawn procedurally in SVG/CSS and tinted per match to the
-  competing clubs' colors. Photography of real stadiums is licensed work we
-  can't redistribute, so nothing is bundled; to use a photo you've licensed,
-  set `--stadium-photo: url(...)` on `.ambient` and the procedural layer sits
-  behind it.
-- **Player cards** — real headshots from the provider's image CDN, framed in
+- **Stadium atmosphere** — a full-bleed photograph of the Santiago Bernabéu
+  under floodlights forms the base layer, under a heavy dark vignette, with
+  club-colored radial gradients on top that retint the lighting to whichever
+  match is open. A procedural SVG stadium sits beneath as a fallback if the
+  photo fails to load. Swap the image via `--stadium-photo: url(...)`.
+
+  > Photo by [Vienna Reyes](https://unsplash.com/@viennachanges) on
+  > [Unsplash](https://unsplash.com/photos/soccer-field-LDuFjsin71k), used under the
+  > [Unsplash License](https://unsplash.com/license) (free for commercial use).
+  > Served locally from `static/` so the page has no third-party image dependency.
+- **Player cards** — real headshots proxied through `/api/player-photo/{id}`
+  and cached on disk (never hotlinked, so privacy extensions that block
+  third-party media can't blank them), framed in
   the rarity color (gold ≥9, purple ≥8, blue ≥7, gray below, muted for unused
   subs) with shirt number and position. Ratings come from the provider, not
   parsed from prose. A missing photo degrades to a styled initials monogram.
@@ -142,6 +148,7 @@ keep serving normally. Live budget state is on `GET /health`.
 | `GET /api/search?q=` | Universal autocomplete: teams, matchups, competitions |
 | `GET /api/competitions` | Tracked competitions + seasons this plan can read |
 | `GET /api/competitions/{id}/fixtures?season=` | Live fixture ingestion for a competition/season |
+| `GET /api/player-photo/{player_id}` | Same-origin headshot proxy (disk-cached) |
 | `GET /api/trending` | Pre-seeded iconic fixtures for the homepage grid |
 | `GET /api/fixtures?team1=&team2=` | Head-to-head or season fixtures for a team |
 | `GET /api/match/{fixture_id}/summary` | Three-layer AI match summary (JSON; `?refresh=true` to regenerate) |

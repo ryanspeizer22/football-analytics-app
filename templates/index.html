@@ -37,29 +37,32 @@
     }
 
     /* ===== Immersive stadium atmosphere =====
-       Built procedurally (SVG architecture + CSS light) rather than from
-       stadium photography, which is licensed work we can't redistribute.
-       To use a licensed photo instead, set --stadium-photo to a url() and the
-       procedural layer fades behind it. */
+       Base layer is a photograph of the Santiago Bernabéu by Vienna Reyes
+       (Unsplash License — free for commercial use), served locally so the
+       page has no third-party image dependency. The procedural SVG stays
+       underneath as a fallback if the photo ever fails to load. */
     .ambient {
       position: fixed; inset: 0; z-index: -1; pointer-events: none;
       overflow: hidden;
       background: var(--bg);
     }
 
-    /* Optional licensed photograph — unset by default. */
     .ambient .photo {
       position: absolute; inset: 0;
-      background-image: var(--stadium-photo, none);
-      background-size: cover; background-position: center 30%;
-      opacity: var(--stadium-photo-opacity, 0.28);
-      filter: grayscale(0.35) contrast(1.1) brightness(0.5);
+      background-image: var(--stadium-photo, url("/static/stadium-bernabeu.jpg"));
+      background-size: cover;
+      background-position: center 22%;
+      /* Heavily knocked back: the photo is atmosphere, and body copy has to
+         stay legible on top of the crowd's high-frequency detail. */
+      opacity: var(--stadium-photo-opacity, 0.85);
+      filter: grayscale(0.32) contrast(1.05) brightness(0.62) saturate(0.9);
+      transform: scale(1.04);  /* hides edge softness from the blur/vignette */
     }
 
     .ambient .architecture {
       position: absolute; left: 50%; top: 0; transform: translateX(-50%);
       width: max(1600px, 120vw); height: 78vh; min-height: 520px;
-      opacity: 0.5;   /* atmosphere, not subject — content must stay dominant */
+      opacity: 0.16;  /* structural echo beneath the photo, not a second stadium */
     }
 
     /* Floodlight wash from the two upper corners, tinted per match. */
@@ -72,14 +75,22 @@
       transition: background 0.9s ease;
     }
 
-    /* Haze in the light beams + vignette to seat the content. */
+    /* Heavy dark vignette — the photo shows through at the top and corners,
+       then falls away to near-solid so every card and paragraph keeps its
+       contrast regardless of what's behind it. */
     .ambient .haze {
       position: absolute; inset: 0;
       background:
-        radial-gradient(80% 50% at 50% 0%, rgba(255,255,255,0.05), transparent 70%),
-        /* Deep vignette so body copy always sits on near-solid ground. */
-        radial-gradient(115% 80% at 50% 32%, transparent 10%, rgba(4,6,12,0.86) 62%, rgba(4,6,12,0.97) 100%),
-        linear-gradient(180deg, transparent 45%, var(--bg) 92%);
+        /* Corner vignette — keeps the frame dark without flattening the middle. */
+        radial-gradient(125% 95% at 50% 18%, transparent 30%, rgba(4,6,12,0.55) 72%, rgba(4,6,12,0.9) 100%),
+        /* Vertical fall-off: stadium reads across the hero, then hands the
+           page over to solid background before the content grid begins. */
+        linear-gradient(180deg,
+          rgba(4,6,12,0.55) 0%,
+          rgba(4,6,12,0.28) 18%,
+          rgba(4,6,12,0.55) 42%,
+          rgba(4,6,12,0.90) 66%,
+          var(--bg) 88%);
     }
     .ambient .grain { /* scanline texture, keeps large gradients from banding */
       position: absolute; inset: 0;
@@ -775,7 +786,14 @@
     </section>
   </main>
 
-  <footer>PITCHSENSE — data via API-Football · intelligence by Claude</footer>
+  <footer>
+    PITCHSENSE — data via API-Football · intelligence by Claude ·
+    stadium photograph by
+    <a href="https://unsplash.com/@viennachanges" target="_blank" rel="noopener noreferrer"
+       style="color:inherit">Vienna Reyes</a>
+    on <a href="https://unsplash.com/photos/soccer-field-LDuFjsin71k" target="_blank"
+          rel="noopener noreferrer" style="color:inherit">Unsplash</a>
+  </footer>
 
   <script>
     "use strict";
@@ -1150,8 +1168,11 @@
         // The provider's own rating is authoritative; fall back to the prose.
         const rating = p.rating != null ? p.rating.toFixed(1) : extractRating(p.rating_comment);
         const { color, tier } = rarity(rating);
+        // NOTE: no loading="lazy" here. These cards are built inside a
+        // display:none tab panel, so a lazy image is never "near the
+        // viewport" and stays permanently pending — the frames render empty.
         const portrait = p.photo
-          ? `<img src="${esc(p.photo)}" alt="" loading="lazy"
+          ? `<img src="${esc(p.photo)}" alt="" decoding="async" width="58" height="58"
                   onerror="this.replaceWith(Object.assign(document.createElement('span'),
                            {className:'initials', textContent:'${esc(initials(p.player_name))}'}))">`
           : `<span class="initials">${esc(initials(p.player_name))}</span>`;
