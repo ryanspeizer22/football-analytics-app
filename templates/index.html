@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Football Analytics — Match Intelligence</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --surface: #161b22;
+      --surface-2: #1d2430;
+      --border: #2a3342;
+      --text: #e6e9ef;
+      --text-dim: #8b95a5;
+      --accent: #35c26b;       /* pitch green */
+      --accent-soft: rgba(53, 194, 107, 0.12);
+      --premium: #d9a441;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ---------- Header ---------- */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 2rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.1rem; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+
+    .search {
+      display: flex; gap: 0.5rem; flex: 1; max-width: 420px;
+    }
+    .search input {
+      flex: 1;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+    }
+    .search button {
+      background: var(--accent);
+      color: #08130c;
+      border: none;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .search button:hover { filter: brightness(1.1); }
+
+    /* ---------- Layout ---------- */
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+
+    .hero { margin-bottom: 1.5rem; }
+    .hero h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    .hero p { color: var(--text-dim); font-size: 0.95rem; }
+
+    /* ---------- Tabs ---------- */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .tab {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      padding: 0.65rem 1.1rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab .badge {
+      background: var(--premium);
+      color: #201503;
+      font-size: 0.65rem;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 0.1rem 0.45rem;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+
+    /* ---------- Panels & cards ---------- */
+    .panel { display: none; }
+    .panel.active { display: block; animation: fade 0.2s ease; }
+    @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 { font-size: 1.05rem; margin-bottom: 0.6rem; }
+    .card p { color: var(--text-dim); line-height: 1.6; }
+
+    .tldr {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+    }
+    .tldr p { color: var(--text); font-size: 1.02rem; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .stat-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.75rem; }
+    .chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.7rem;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    /* ---------- Player table ---------- */
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--text-dim); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    td.player-name { font-weight: 600; white-space: nowrap; }
+    td .verdict { color: var(--accent); font-size: 0.82rem; display: block; margin-bottom: 0.2rem; }
+
+    /* ---------- Premium panel ---------- */
+    .premium-card { border-color: var(--premium); text-align: center; padding: 2.5rem 1.5rem; }
+    .premium-card h2 { color: var(--premium); }
+    .premium-card .cta {
+      display: inline-block;
+      margin-top: 1rem;
+      background: var(--premium);
+      color: #201503;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      padding: 0.6rem 1.4rem;
+      cursor: pointer;
+    }
+
+    /* ---------- States ---------- */
+    .placeholder { color: var(--text-dim); font-style: italic; }
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: #e06c75; }
+
+    footer { text-align: center; color: var(--text-dim); font-size: 0.8rem; padding: 2rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot"></span> PitchSense Analytics</div>
+    <form class="search" id="fixture-form">
+      <input type="number" id="fixture-id" placeholder="Enter fixture ID (e.g. 1035045)" required />
+      <button type="submit">Analyze</button>
+    </form>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Match Intelligence Dashboard</h1>
+      <p>AI-generated summaries at three depths — from a 10-second TL;DR to player-by-player notes.</p>
+    </section>
+
+    <!-- Tabs -->
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-panel="panel-tldr">Quick TL;DR</button>
+      <button class="tab" data-panel="panel-teams">Team Breakdown</button>
+      <button class="tab" data-panel="panel-players">Player Notes</button>
+      <button class="tab" data-panel="panel-premium">Tactical Deep-Dive<span class="badge">PRO</span></button>
+    </nav>
+
+    <!-- Layer 1: Quick TL;DR -->
+    <section id="panel-tldr" class="panel active">
+      <div class="card tldr">
+        <h2>⚡ Quick TL;DR</h2>
+        <p id="tldr-content" class="placeholder">Search for a fixture above to generate a summary.</p>
+      </div>
+    </section>
+
+    <!-- Layer 2: Team Breakdown -->
+    <section id="panel-teams" class="panel">
+      <div class="grid-2" id="teams-content">
+        <div class="card"><p class="placeholder">Team breakdowns will appear here after analysis.</p></div>
+      </div>
+    </section>
+
+    <!-- Layer 3: Player-by-Player -->
+    <section id="panel-players" class="panel">
+      <div class="card">
+        <h2>Player-by-Player Notes</h2>
+        <table>
+          <thead>
+            <tr><th>Player</th><th>Team</th><th>Analysis</th></tr>
+          </thead>
+          <tbody id="players-content">
+            <tr><td colspan="3" class="placeholder">Player notes will appear here after analysis.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Premium tier placeholder -->
+    <section id="panel-premium" class="panel">
+      <div class="card premium-card">
+        <h2>🔒 Tactical Deep-Dive — Premium</h2>
+        <p>Formations &amp; shape changes, pressing patterns, buildup structure, and turning-point analysis. Coming soon.</p>
+        <button class="cta" disabled>Upgrade (coming soon)</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>PitchSense Analytics — data via API-Football · summaries by Claude</footer>
+
+  <script>
+    // ---------- Tab switching ----------
+    const tabs = document.querySelectorAll(".tab");
+    const panels = document.querySelectorAll(".panel");
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => t.classList.remove("active"));
+        panels.forEach((p) => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.panel).classList.add("active");
+      });
+    });
+
+    // ---------- Fetch + render summary ----------
+    const form = document.getElementById("fixture-form");
+    const tldrEl = document.getElementById("tldr-content");
+    const teamsEl = document.getElementById("teams-content");
+    const playersEl = document.getElementById("players-content");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fixtureId = document.getElementById("fixture-id").value;
+
+      tldrEl.className = "";
+      tldrEl.innerHTML = '<span class="spinner"></span>Generating summary…';
+      teamsEl.innerHTML = '<div class="card"><p><span class="spinner"></span>Loading…</p></div>';
+      playersEl.innerHTML = '<tr><td colspan="3"><span class="spinner"></span>Loading…</td></tr>';
+
+      try {
+        const res = await fetch(`/api/match/${fixtureId}/summary`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Request failed (${res.status})`);
+        }
+        const data = await res.json();
+        renderSummary(data);
+      } catch (err) {
+        const msg = `<span class="error">${err.message}</span>`;
+        tldrEl.innerHTML = msg;
+        teamsEl.innerHTML = `<div class="card"><p>${msg}</p></div>`;
+        playersEl.innerHTML = `<tr><td colspan="3">${msg}</td></tr>`;
+      }
+    });
+
+    function renderSummary(data) {
+      // Layer 1 — TL;DR
+      tldrEl.textContent = data.tldr;
+
+      // Layer 2 — team breakdowns
+      teamsEl.innerHTML = "";
+      data.team_breakdowns.forEach((team) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <h2>${escapeHtml(team.team_name)}</h2>
+          <p>${escapeHtml(team.narrative)}</p>
+          <div class="stat-chips">
+            ${team.key_stats.map((s) => `<span class="chip">${escapeHtml(s)}</span>`).join("")}
+          </div>`;
+        teamsEl.appendChild(card);
+      });
+
+      // Layer 3 — player notes
+      playersEl.innerHTML = "";
+      data.player_notes.forEach((p) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td class="player-name">${escapeHtml(p.player_name)}</td>
+          <td>${escapeHtml(p.team)}</td>
+          <td><span class="verdict">${escapeHtml(p.rating_comment)}</span>${escapeHtml(p.detail)}</td>`;
+        playersEl.appendChild(row);
+      });
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str ?? "";
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
