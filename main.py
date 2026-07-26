@@ -51,6 +51,7 @@ from services import (
     prematch,
     rate_limit,
     slugs,
+    squads,
     stats,
     cache_migrate,
     summary_cache,
@@ -196,6 +197,20 @@ def compare_page(request: Request, slug: str):
     )
 
 
+@app.get("/players", response_class=HTMLResponse)
+def players_page(request: Request):
+    """Deep link to the player and team directory."""
+    return _shell(
+        request,
+        title="Player & team search — PitchSense",
+        description=("Search any club or player: season ratings, goals, assists, "
+                     "current club and every analysed match they featured in."),
+        path="/players",
+        og_image=f"{BASE_URL}/og/leaderboard/39-2025.png",
+        boot={"view": "players"},
+    )
+
+
 @app.get("/leaderboard/{slug}", response_class=HTMLResponse)
 def leaderboard_page(request: Request, slug: str, metric: str = Query("rating")):
     parsed = slugs.parse_leaderboard(slug)
@@ -306,6 +321,8 @@ def sitemap():
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"  <url><loc>{BASE_URL}/</loc><changefreq>daily</changefreq>"
         "<priority>1.0</priority></url>\n"
+        f"  <url><loc>{BASE_URL}/players</loc><changefreq>weekly</changefreq>"
+        "<priority>0.7</priority></url>\n"
         "</urlset>\n"
     )
     return Response(content=xml, media_type="application/xml")
@@ -848,6 +865,15 @@ def _derived(context: dict, fixture_id: int) -> dict:
         out["momentum"]["caption"] = momentum.summarize_shift(out["momentum"])
     except Exception:
         logger.exception("Momentum build failed for fixture %s", fixture_id)
+    # Free, and from the fixture itself rather than the model: the manager who
+    # was actually in the dugout that day.
+    out["managers"] = [
+        {"team_id": (side.get("team") or {}).get("id"),
+         "team": (side.get("team") or {}).get("name"),
+         "manager": (side.get("coach") or {}).get("name")}
+        for side in (context["fixture"].get("lineups") or [])
+        if (side.get("coach") or {}).get("name")
+    ]
     try:
         comparisons = stats.build_comparisons(
             context["team_statistics"], home_id, away_id
@@ -963,6 +989,126 @@ def _analysis_cached(fixture_id: int) -> tuple[bool, bool]:
             summary_cache.get(f"match-{fixture_id}"),
         ], name) is not None
     return half("opening"), half("analysis")
+
+
+@app.get("/api/players/search")
+def player_search(q: str = Query(..., min_length=2, max_length=60),
+                  league: int = Query(None), season: int = Query(None)):
+    """Find players by name, with the club they are at now.
+
+    Searches the cached league pools first, which is free and instant and
+    covers every player the app has already ranked. The provider's own search
+    is the fallback for anyone outside those pools.
+    """
+    needle = q.strip().lower()
+    season = season or competitions.default_season(league or 39)
+    seen: dict[int, dict] = {}
+
+    # Cached pools first — no quota, no latency.
+    pool_keys = [f"pool-{league}-{season}"] if league else [
+        f"pool-{c['id']}-{competitions.default_season(c['id'])}"
+        for c in competitions.COMPETITIONS if c["kind"] == "domestic_league"
+    ]
+    for key in pool_keys:
+        for row in summary_cache.get(key) or []:
+            name = (row.get("name") or "").lower()
+            if needle in name and row.get("id") not in seen:
+                seen[row["id"]] = {
+                    "id": row["id"],
+                    "name": row.get("name"),
+                    "photo": row.get("photo") or f"/api/player-photo/{row['id']}",
+                    "season_team": row.get("team"),
+                    "team_id": row.get("team_id"),
+                    "position": row.get("position"),
+                    "season": row.get("season"),
+                    "rating": row.get("rating"),
+                    "appearances": row.get("appearances"),
+                    "goals": row.get("goals"),
+                    "assists": row.get("assists"),
+                    "source": "pool",
+                }
+
+    if not seen:
+        try:
+            payload = api_service._get("players/profiles", {"search": needle})
+            for entry in (payload.get("response") or [])[:12]:
+                info = entry.get("player") or {}
+                pid = info.get("id")
+                if not pid or not info.get("name"):
+                    continue
+                seen[pid] = {
+                    "id": pid, "name": info.get("name"),
+                    "photo": f"/api/player-photo/{pid}",
+                    "season_team": None, "team_id": None,
+                    "position": info.get("position"),
+                    "nationality": info.get("nationality"),
+                    "source": "provider",
+                }
+        except Exception as exc:
+            logger.info("Provider player search failed for %r: %s", needle, exc)
+
+    results = sorted(seen.values(),
+                     key=lambda r: (-(r.get("rating") or 0), r["name"]))[:24]
+    return {"query": q, "count": len(results), "players": results}
+
+
+@app.get("/api/player/{player_id}/card")
+def player_card(player_id: int, season: int = Query(None)):
+    """Everything the board shows for one player.
+
+    Keeps two club facts apart on purpose: `current_club` comes from the
+    transfer ledger and is a statement about today, while `season_team` is who
+    they played for in the season being shown. Conflating them is how a page
+    ends up asserting a move that has not happened.
+    """
+    season = season or competitions.default_season()
+    profile = summary_cache.get(f"profile-{player_id}-{season}")
+    if profile is None:
+        try:
+            raw = api_service.get_player_season_stats(player_id, season)
+            profile = player_profile.build_profile(raw, season)
+            summary_cache.set(f"profile-{player_id}-{season}", profile)
+        except Exception as exc:
+            raise _api_error(exc) if isinstance(exc, api_service.FootballAPIError)                 else HTTPException(status_code=404, detail="Player not found.")
+
+    appearances = _mvp_appearances(player_id)
+    return {
+        **profile,
+        "current_club": squads.current_club(player_id),
+        "transfers": squads.history(player_id),
+        "mvp_appearances": appearances,
+    }
+
+
+def _mvp_appearances(player_id: int, limit: int = 12) -> list[dict]:
+    """Matches this app has analysed where the player earned a card.
+
+    Read straight out of the cached player notes, so it costs nothing and only
+    ever reports matches that genuinely exist in the app.
+    """
+    found = []
+    for path in sorted(Path(".cache/summaries").glob("players-*.json")):
+        fixture_id = path.stem.replace("players-", "")
+        payload = summary_cache.get(f"players-{fixture_id}")
+        if not payload:
+            continue
+        for note in payload.get("player_notes") or []:
+            if note.get("player_id") != player_id:
+                continue
+            meta = summary_cache.get(f"meta-{fixture_id}") or {}
+            found.append({
+                "fixture_id": int(fixture_id),
+                "match": f"{meta.get('home','?')} {meta.get('home_score','')}–"
+                         f"{meta.get('away_score','')} {meta.get('away','?')}".strip(),
+                "date": meta.get("date"),
+                "competition": meta.get("competition"),
+                "slug": meta.get("slug"),
+                "rating": note.get("rating"),
+                "verdict": note.get("rating_comment"),
+            })
+            break
+    found.sort(key=lambda f: f.get("date") or "", reverse=True)
+    return found[:limit]
 
 
 @app.get("/api/match-status")

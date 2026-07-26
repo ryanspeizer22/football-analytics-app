@@ -269,6 +269,16 @@ def _strip_players(match_context: dict[str, Any]) -> dict[str, Any]:
     lineups = fixture.get("lineups") or []
 
     return {
+        # Who was actually in the dugout for THIS match. The provider records
+        # the coach per fixture, so it is historically correct; without it the
+        # model names managers from its own knowledge and gets them wrong the
+        # moment a club changes hands. Observed: a October 2025 Liverpool v
+        # Manchester United report credited Amorim when the data says Carrick.
+        "coaches": [
+            {"team": (side.get("team") or {}).get("name"),
+             "manager": (side.get("coach") or {}).get("name")}
+            for side in lineups if (side.get("coach") or {}).get("name")
+        ],
         "fixture": {
             key: fixture.get(key)
             for key in ("fixture", "league", "teams", "goals", "score")
@@ -338,7 +348,10 @@ _OPENING_PROMPT = (
     "- tldr: 2-3 sentences on what happened and why. No stat dump.\n"
     "- momentum_takeaways: 3-4 bullets tracing how control moved, each naming "
     "the minute or passage that caused the swing.\n\n"
-    "Write only these three fields, and keep them tight."
+    "Write only these three fields, and keep them tight.\n\n"
+    "If you name a manager, use only the names in `coaches` — those are who was "
+    "in the dugout for this match. Never supply one from memory: clubs change "
+    "manager, and the report would be wrong for every match after they did."
 )
 
 _ANALYSIS_PROMPT = (
@@ -356,7 +369,11 @@ _ANALYSIS_PROMPT = (
     "concrete takeaways under ~14 words; `narrative` is the fuller prose; "
     "`manager_takeaway` is one sentence on what this result tells that manager "
     "about their side.\n\n"
-    "Never repeat a number in more than one place."
+    "Never repeat a number in more than one place.\n\n"
+    "If you name a manager, use only the names in `coaches` — those are who was "
+    "in the dugout for this match. Never supply one from memory: clubs change "
+    "manager, and the report would be wrong for every match after they did. If "
+    "`coaches` is absent or empty, do not name a manager at all."
 )
 
 

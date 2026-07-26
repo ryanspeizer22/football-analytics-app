@@ -628,6 +628,11 @@
     @media (max-width: 780px) { .grid-2 { grid-template-columns: 1fr; } }
 
     .team-card { --c: var(--neon); border-top: 3px solid var(--c); }
+    .team-manager {
+      font-size: 0.7rem; color: var(--text-dim); margin: -0.2rem 0 0.6rem;
+      letter-spacing: 0.02em;
+    }
+    .team-manager::before { content: "Manager · "; opacity: 0.7; }
     .team-card h3 .swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--c); box-shadow: 0 0 12px var(--c); }
 
     /* Club crests & competition logos.
@@ -760,6 +765,91 @@
       border: 1px solid var(--border);
       font-size: 0.76rem; color: var(--text-dim); line-height: 1.5;
     }
+
+    /* ===== Players & teams board ===== */
+    .pb-search { margin-bottom: 1rem; }
+    .pb-search input {
+      width: 100%; padding: 0.85rem 1.05rem; border-radius: 12px;
+      background: var(--glass); border: 1px solid var(--border-bright);
+      color: var(--text); font-family: var(--font); font-size: 0.95rem;
+    }
+    .pb-search input:focus { outline: none; border-color: var(--neon); }
+    .pb-label {
+      font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--text-dim); margin: 0.2rem 0 0.5rem;
+    }
+    .pb-hint { color: var(--text-dim); font-size: 0.85rem; padding: 0.6rem 0; }
+    .pb-teams { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 1rem; }
+    .pb-teams .pb-label { width: 100%; margin-bottom: 0; }
+    .pb-team {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      background: var(--glass); border: 1px solid var(--border);
+      border-radius: 999px; padding: 0.35rem 0.75rem; cursor: pointer;
+      color: var(--text); font-family: var(--font); font-size: 0.82rem; font-weight: 600;
+    }
+    .pb-team:hover { border-color: var(--neon); }
+    .pb-results { display: grid; gap: 0.4rem; }
+    .pb-player {
+      display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+      gap: 0.7rem; width: 100%; text-align: left; cursor: pointer;
+      background: rgba(255,255,255,0.035); border: 1px solid var(--border);
+      border-radius: 11px; padding: 0.55rem 0.75rem;
+      color: var(--text); font-family: var(--font);
+      transition: border-color 0.14s, transform 0.14s;
+    }
+    .pb-player:hover { border-color: var(--neon); transform: translateX(2px); }
+    .pb-face {
+      width: 38px; height: 38px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
+      background: rgba(255,255,255,0.07); display: inline-flex;
+      align-items: center; justify-content: center;
+    }
+    .pb-face.lg { width: 60px; height: 60px; }
+    .pb-face img { width: 100%; height: 100%; object-fit: cover; }
+    .pb-who { min-width: 0; }
+    .pb-who strong { display: block; font-size: 0.9rem; }
+    .pb-who span { font-size: 0.74rem; color: var(--text-dim); }
+    .pb-rating {
+      font-weight: 800; font-variant-numeric: tabular-nums; font-size: 0.85rem;
+      background: rgba(255,255,255,0.07); border-radius: 8px; padding: 0.15rem 0.45rem;
+    }
+    .pb-card { margin-top: 1rem; }
+    .pb-head { display: flex; align-items: center; gap: 0.9rem; margin-bottom: 0.9rem; }
+    .pb-sub { font-size: 0.78rem; color: var(--text-dim); margin-top: 0.15rem; }
+    .pb-big { margin-left: auto; font-size: 1.6rem; font-weight: 800; color: var(--neon); }
+    /* Current club is a claim about today and is labelled as such — it is not
+       the same fact as the club on a season row. */
+    .pb-club {
+      display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+      padding: 0.6rem 0.8rem; border-radius: 10px; margin-bottom: 0.9rem;
+      background: var(--neon-soft); border: 1px solid rgba(55,240,162,0.24);
+    }
+    .pb-club.muted { background: rgba(255,255,255,0.04); border-color: var(--border); }
+    .pb-club span { font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); }
+    .pb-club em { font-size: 0.72rem; color: var(--text-dim); font-style: normal; }
+    .pb-stats { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .pb-stats div {
+      background: rgba(255,255,255,0.04); border-radius: 9px;
+      padding: 0.4rem 0.65rem; min-width: 72px;
+    }
+    .pb-stats span { display: block; font-size: 0.62rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-dim); }
+    .pb-stats strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
+    .pb-apps { display: grid; gap: 0.35rem; }
+    .pb-app {
+      display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.6rem;
+      background: rgba(255,255,255,0.035); border: 1px solid var(--border);
+      border-radius: 9px; padding: 0.45rem 0.65rem; cursor: pointer;
+      color: var(--text); font-family: var(--font); text-align: left;
+    }
+    .pb-app:hover { border-color: var(--neon); }
+    .pb-app-match { font-size: 0.82rem; font-weight: 600; }
+    .pb-app-meta { font-size: 0.68rem; color: var(--text-dim); }
+    .pb-app-rating { font-weight: 800; font-size: 0.8rem; color: var(--neon); }
+    .pb-transfers { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+    .pb-transfers li { font-size: 0.78rem; color: var(--text-dim); }
+    .pb-transfers li span { font-variant-numeric: tabular-nums; margin-right: 0.5rem; opacity: 0.8; }
+    .pb-transfers li strong { color: var(--text); }
+    .pb-transfers li em { font-style: normal; opacity: 0.7; margin-left: 0.35rem; }
 
     /* ===== Highlights ===== */
     /* Shown when no rights-holder video could be resolved. A link, not a
@@ -1634,6 +1724,7 @@
 
   <header>
     <div class="brand" id="brand"><span class="bolt">⚡</span> Pitch<em>Sense</em></div>
+    <button class="nav-link" id="nav-players">🔎 Players</button>
     <button class="nav-link" id="nav-leaderboard">🏅 Leaderboard</button>
     <div class="search-wrap">
       <div class="search-bar">
@@ -1668,6 +1759,23 @@
     </section>
 
     <!-- ================= LEADERBOARD ================= -->
+  <section id="view-players" class="view">
+      <button class="back-btn" data-back>← Back</button>
+      <div class="hero" style="margin-bottom:1rem">
+        <div class="eyebrow">Directory</div>
+        <h1 style="font-size:clamp(1.3rem,3vw,1.9rem)">🔎 Players &amp; teams</h1>
+        <p style="font-size:0.88rem">Search a club to browse its matches, or a player to
+           see their season, their rating and every match here they earned a card in.</p>
+      </div>
+      <div class="pb-search">
+        <input id="pb-input" type="search" placeholder="Search a player or a club — try &quot;Rogers&quot; or &quot;Aston Villa&quot;"
+               autocomplete="off" spellcheck="false" />
+      </div>
+      <div id="pb-teams" class="pb-teams"></div>
+      <div id="pb-results" class="pb-results"></div>
+      <div id="pb-detail"></div>
+    </section>
+
     <section id="view-leaderboard" class="view">
       <button class="back-btn" data-back>← Back</button>
       <div class="hero" style="margin-bottom:1rem">
@@ -1875,6 +1983,7 @@
       home: $("view-home"),
       select: $("view-select"),
       summary: $("view-summary"),
+      players: $("view-players"),
       leaderboard: $("view-leaderboard"),
     };
     let navStack = ["home"];
@@ -2540,6 +2649,20 @@
         : "";
     }
 
+    /* The manager in charge for the match being viewed — not whoever runs the
+       club today. Held from the derived payload, which reads it off the
+       fixture's own lineups. */
+    let matchManagers = [];
+    function managerFor(teamName) {
+      if (!teamName) return null;
+      const want = teamName.toLowerCase();
+      const hit = matchManagers.find((m) => {
+        const t = (m.team || "").toLowerCase();
+        return t === want || t.includes(want) || want.includes(t);
+      });
+      return hit ? hit.manager : null;
+    }
+
     function renderAnalysis(data, match) {
       /* The analytical reads — what settled it, what the numbers hide, what
          changed after the bench. Each is omitted when absent rather than shown
@@ -2574,6 +2697,7 @@
         return `
           <div class="card team-card" style="--c:${esc(color)};--accent-mark:${esc(color)}">
             <h3><span class="swatch"></span>${esc(t.team_name)}</h3>
+            ${managerFor(t.team_name) ? `<div class="team-manager">${esc(managerFor(t.team_name))}</div>` : ""}
             ${t.verdict ? `<span class="verdict-tag">${esc(t.verdict)}</span>` : ""}
             ${bullets.length
               ? `<ul class="takeaways compact">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>`
@@ -3003,6 +3127,7 @@
             </div>
           </div>`;
       }).join("");
+      matchManagers = data.managers || [];
       renderMomentum(data.momentum, match);
       $("summary-content").hidden = false;
       requestAnimationFrame(() => requestAnimationFrame(() =>
@@ -3410,6 +3535,8 @@
             renderTray();
             await openComparison();
           }
+        } else if (path === "/players") {
+          openPlayerBoard();
         } else if (boot?.view === "leaderboard" || path.startsWith("/leaderboard/")) {
           await openLeaderboard({
             league: boot?.league ?? 39,
@@ -3452,6 +3579,138 @@
     }
 
     window.addEventListener("popstate", () => restoreFromUrl(null));
+
+    /* ====================== Players & teams board ====================== */
+    $("nav-players").addEventListener("click", () => openPlayerBoard());
+
+    function openPlayerBoard() {
+      showView("players");
+      setRoute("/players");
+      $("pb-input").focus();
+      if (!$("pb-results").dataset.seeded) {
+        $("pb-results").dataset.seeded = "1";
+        $("pb-results").innerHTML =
+          `<div class="pb-hint">Start typing to search players and clubs.</div>`;
+      }
+    }
+
+    let pbTimer = null, pbLoad = 0;
+    $("pb-input").addEventListener("input", (e) => {
+      const q = e.target.value.trim();
+      clearTimeout(pbTimer);
+      if (q.length < 2) {
+        $("pb-teams").innerHTML = ""; $("pb-detail").innerHTML = "";
+        $("pb-results").innerHTML = `<div class="pb-hint">Start typing to search players and clubs.</div>`;
+        return;
+      }
+      pbTimer = setTimeout(() => runBoardSearch(q), 220);
+    });
+
+    async function runBoardSearch(q) {
+      const token = ++pbLoad;
+      $("pb-results").innerHTML = `<div class="pb-hint">Searching…</div>`;
+      $("pb-detail").innerHTML = "";
+
+      // Clubs and players are looked up together — the board answers both.
+      const [teamsRes, playersRes] = await Promise.all([
+        fetch(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+        fetch(`/api/players/search?q=${encodeURIComponent(q)}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      if (token !== pbLoad) return;      // a newer keystroke already won
+
+      const teams = (teamsRes && teamsRes.teams) || [];
+      $("pb-teams").innerHTML = teams.length
+        ? `<div class="pb-label">Clubs</div>` + teams.slice(0, 6).map((t) => `
+            <button class="pb-team" data-team="${t.id}" data-name="${esc(t.name)}">
+              ${crest(t, "sm")}<span>${esc(t.name)}</span>
+            </button>`).join("")
+        : "";
+      $("pb-teams").querySelectorAll("[data-team]").forEach((b) =>
+        b.addEventListener("click", () => openTeam(+b.dataset.team, b.dataset.name)));
+
+      const players = (playersRes && playersRes.players) || [];
+      $("pb-results").innerHTML = players.length
+        ? `<div class="pb-label">Players</div>` + players.map((p) => `
+            <button class="pb-player" data-player="${p.id}">
+              <span class="pb-face"><img src="${esc(p.photo)}" alt="" loading="eager"
+                    onerror="this.remove()"></span>
+              <span class="pb-who">
+                <strong>${esc(p.name)}</strong>
+                <span>${esc(p.season_team || p.nationality || "")}${p.position ? " · " + esc(p.position) : ""}</span>
+              </span>
+              ${p.rating ? `<span class="pb-rating">${p.rating}</span>` : ""}
+            </button>`).join("")
+        : `<div class="pb-hint">No players found for “${esc(q)}”.</div>`;
+      $("pb-results").querySelectorAll("[data-player]").forEach((b) =>
+        b.addEventListener("click", () => openPlayerDetail(+b.dataset.player)));
+    }
+
+    async function openPlayerDetail(playerId) {
+      const box = $("pb-detail");
+      box.innerHTML = `<div class="card"><div class="pb-hint">Loading player…</div></div>`;
+      box.scrollIntoView({ behavior: "smooth", block: "start" });
+      try {
+        const res = await fetch(`/api/player/${playerId}/card`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail || "Player unavailable");
+        renderPlayerDetail(d);
+      } catch (err) {
+        box.innerHTML = `<div class="card notice">${esc(err.message)}</div>`;
+      }
+    }
+
+    function renderPlayerDetail(d) {
+      const p = d.player || {}, t = d.totals || {};
+      const club = d.current_club;
+      /* Two different facts, kept visually apart. `season_team` is who they
+         played for in the season shown; `current_club` comes from the transfer
+         ledger and is a claim about today. Merging them is how a page ends up
+         asserting a move the records do not contain. */
+      const clubLine = club
+        ? `<div class="pb-club"><span>Current club</span>
+             <strong>${esc(club.name)}</strong>
+             <em>since ${esc((club.since || "").slice(0, 10))}</em></div>`
+        : `<div class="pb-club muted"><span>Current club</span>
+             <strong>Not on record</strong>
+             <em>no transfer filed with the data provider</em></div>`;
+
+      $("pb-detail").innerHTML = `
+        <div class="card pb-card">
+          <div class="pb-head">
+            <span class="pb-face lg">${p.photo ? `<img src="${esc(p.photo)}" alt="" onerror="this.remove()">` : ""}</span>
+            <div>
+              <h3 style="margin:0">${esc(p.name || "")}</h3>
+              <div class="pb-sub">${esc(p.team || "")}${p.position ? " · " + esc(p.position) : ""}
+                ${p.nationality ? " · " + esc(p.nationality) : ""}</div>
+            </div>
+            ${d.average_rating ? `<span class="pb-big">${d.average_rating.toFixed(2)}</span>` : ""}
+          </div>
+          ${clubLine}
+          <div class="pb-stats">
+            ${[["Apps", t.appearances], ["Goals", t.goals], ["Assists", t.assists],
+               ["Key passes", t.key_passes], ["Minutes", t.minutes]]
+              .filter(([, v]) => v != null)
+              .map(([k, v]) => `<div><span>${k}</span><strong>${v}</strong></div>`).join("")}
+          </div>
+          ${(d.mvp_appearances || []).length ? `
+            <div class="pb-label" style="margin-top:1rem">Featured in these analyses</div>
+            <div class="pb-apps">${d.mvp_appearances.map((m) => `
+              <button class="pb-app" data-fixture="${m.fixture_id}">
+                <span class="pb-app-match">${esc(m.match)}</span>
+                <span class="pb-app-meta">${esc(m.competition || "")} · ${esc(m.date || "")}</span>
+                ${m.rating ? `<span class="pb-app-rating">${m.rating}</span>` : ""}
+              </button>`).join("")}</div>` : ""}
+          ${(d.transfers || []).length ? `
+            <div class="pb-label" style="margin-top:1rem">Transfer record</div>
+            <ul class="pb-transfers">${d.transfers.map((x) => `
+              <li><span>${esc((x.date || "").slice(0, 10))}</span>
+                  ${esc(x.from || "?")} → <strong>${esc(x.to || "?")}</strong>
+                  ${x.type && x.type !== "N/A" ? `<em>${esc(x.type)}</em>` : ""}</li>`).join("")}</ul>` : ""}
+        </div>`;
+
+      $("pb-detail").querySelectorAll("[data-fixture]").forEach((b) =>
+        b.addEventListener("click", () => openMatchById(+b.dataset.fixture)));
+    }
 
     /* =========================== Leaderboard =========================== */
     let lbState = { league: 39, season: null, metric: "rating", metrics: [] };
