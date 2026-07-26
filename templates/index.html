@@ -746,6 +746,28 @@
     .hl-yt-face:hover .hl-yt-play::after { border-left-color: #04130b; }
     .hl-yt-face:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
 
+    /* The validated player sits behind the poster, mounted but hidden, so the
+       press of the play button is instant rather than a swap. */
+    .hl-yt-stage { display: none; }
+    .hl-yt-stage.live { display: block; }
+    .hl-yt-stage iframe { width: 100%; display: block; aspect-ratio: 16 / 9; border: 0; }
+    .hl-yt-stage div { width: 100%; aspect-ratio: 16 / 9; }
+
+    /* While a candidate is being checked the button is a quiet spinner rather
+       than a play triangle — it should not invite a click it cannot honour. */
+    .hl-yt-face.checking { cursor: default; }
+    .hl-yt-face.checking .hl-yt-play::after {
+      border: 0; width: 18px; height: 18px; border-radius: 50%;
+      border-top: 2px solid var(--text); border-right: 2px solid transparent;
+      transform: none; animation: ytSpin 0.7s linear infinite;
+    }
+    @keyframes ytSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .hl-yt-face.checking .hl-yt-play::after { animation: none; }
+    }
+    .hl-yt-face.checking:hover .hl-yt-play { background: rgba(12, 16, 25, 0.82); transform: none; }
+    .hl-yt-face.checking:hover img { transform: none; filter: brightness(0.86); }
+
     /* The photograph attached to a moment. Circular and ringed in the team's
        colour so the reel reads as faces first, text second. */
     .hl-face {
@@ -2411,6 +2433,18 @@
       miss: "❌", red_card: "🟥", var_overturn: "⊘",
     };
 
+    /* Runs the callback once the Highlights panel is actually on screen.
+       Deferring the video check to that moment keeps the promise that nothing
+       is loaded from YouTube for a visitor who never opens the tab, while
+       still resolving playability before they reach for the play button. */
+    function whenHighlightsVisible(fn) {
+      const panel = $("panel-highlights");
+      if (!panel) return;
+      if (panel.classList.contains("active")) { fn(); return; }
+      const tab = document.querySelector('[data-panel="panel-highlights"]');
+      if (tab) tab.addEventListener("click", fn, { once: true });
+    }
+
     /* Loads YouTube's IFrame API once, on demand. Nothing from YouTube is
        fetched until a viewer actually presses play. */
     let ytApiReady = null;
@@ -2438,64 +2472,102 @@
               </a>`;
     }
 
-    /* YouTube IFrame API error codes, and what each is worth doing about:
+    /* YouTube IFrame API error codes, and what each means here:
          2   malformed id           — permanent for this video
          5   HTML5 player failure   — often transient, worth one more attempt
          100 removed or private     — permanent for this video
          101 embedding disallowed   — permanent for this video
          150 same as 101, and what a territorial block reports as
-       Only code 5 is retried in place. The rest mean this particular upload
-       will never play here, so the next candidate is tried instead — rights
-       are sold by territory, so an NBC video refusing in the UK says nothing
-       about the Sky one ranked behind it. */
+       Verified against a real geo-blocked upload: code 150 fires on *load*,
+       with autoplay off, not on play. So a candidate can be tested silently
+       before any play button is offered — which is the whole point below. */
     const YT_RETRYABLE = new Set([5]);
+    const YT_VALIDATE_TIMEOUT = 8000;
+    // How long to keep listening after onReady before trusting it. Measured
+    // against a real geo-blocked upload, the refusal arrived well inside this.
+    const YT_CONFIRM_WINDOW = 2500;
 
-    async function mountYouTube(box, candidates, searchUrl) {
+    /* Mount a candidate muted and paused, and report whether it is actually
+       playable here. Territorial rights make this per-viewer — the server
+       cannot know, because its country is not the visitor's — so the check has
+       to happen in the browser. Doing it up front is what stops a player from
+       vanishing under the cursor. */
+    function validateCandidate(YT, host, id) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = (player) => { if (!settled) { settled = true; resolve(player); } };
+        const timeout = setTimeout(() => done(null), YT_VALIDATE_TIMEOUT);
+        let confirm;
+        let player;
+        try {
+          player = new YT.Player(host, {
+            videoId: id,
+            playerVars: { rel: 0, modestbranding: 1, autoplay: 0, mute: 1, playsinline: 1 },
+            events: {
+              /* onReady is not the all-clear. A territory-blocked video still
+                 initialises its player and only then reports the refusal, so
+                 accepting on ready passes exactly the videos this is meant to
+                 catch. Wait out a short window and let onError win if it comes. */
+              onReady: () => {
+                clearTimeout(timeout);
+                confirm = setTimeout(() => done(player), YT_CONFIRM_WINDOW);
+              },
+              onError: () => {
+                clearTimeout(timeout);
+                clearTimeout(confirm);
+                done(null);
+              },
+            },
+          });
+        } catch { clearTimeout(timeout); done(null); }
+      });
+    }
+
+    /* Walks the candidates, keeps the first that validates, and wires the
+       poster to it. Nothing here is destructive until a decision is reached:
+       the panel shows a poster while checking, then either a working play
+       button or the search card. The user never clicks a player that breaks. */
+    async function prepareVideo(box, candidates, searchUrl) {
       const queue = (candidates || []).filter((c) => c && c.id);
       if (!queue.length) { box.outerHTML = highlightsFallback(searchUrl); return; }
 
-      const host = document.createElement("div");
       const face = box.querySelector(".hl-yt-face");
-      if (face) face.replaceWith(host); else box.innerHTML = "";
+      if (face) face.classList.add("checking");
+
       const YT = await youtubeApi();
+      const stage = document.createElement("div");
+      stage.className = "hl-yt-stage";
+      box.insertBefore(stage, box.firstChild);
 
-      let index = 0, retried = false, player = null;
-
-      const credit = (c) => {
-        const el = box.querySelector(".hl-credit");
-        if (el) el.innerHTML =
-          `${esc(c.title || "Match highlights")}${c.channel ? ` · <strong>${esc(c.channel)}</strong> on YouTube` : ""}`;
-      };
-
-      const play = () => {
-        const c = queue[index];
-        credit(c);
-        if (player) { player.loadVideoById(c.id); return; }
-        player = new YT.Player(host, {
-          videoId: c.id,
-          playerVars: { rel: 0, modestbranding: 1, autoplay: 1, playsinline: 1 },
-          events: { onError: (e) => onError(e.data) },
-        });
-      };
-
-      const onError = (code) => {
-        if (YT_RETRYABLE.has(code) && !retried) {
-          retried = true;                       // one more go at the same video
-          setTimeout(play, 600);
+      for (const candidate of queue) {
+        const host = document.createElement("div");
+        stage.appendChild(host);
+        const player = await validateCandidate(YT, host, candidate.id);
+        if (player) {
+          // Playable. Reveal the button; the iframe is already mounted behind
+          // the poster, so pressing play is instant rather than a swap.
+          if (face) {
+            face.classList.remove("checking");
+            face.classList.add("ready");
+            face.addEventListener("click", () => {
+              stage.classList.add("live");
+              face.remove();
+              player.unMute();
+              player.playVideo();
+            }, { once: true });
+          }
+          const credit = box.querySelector(".hl-credit");
+          if (credit) credit.innerHTML =
+            `${esc(candidate.title || "Match highlights")}` +
+            `${candidate.channel ? ` · <strong>${esc(candidate.channel)}</strong> on YouTube` : ""}`;
           return;
         }
-        retried = false;
-        index += 1;
-        if (index < queue.length) {
-          console.info(`highlights: candidate ${index} failed (code ${code}); trying next`);
-          play();
-          return;
-        }
-        // Genuinely out of options — every candidate refused to play here.
-        box.outerHTML = highlightsFallback(searchUrl);
-      };
+        console.info(`highlights: candidate ${candidate.id} is not playable here; trying next`);
+        host.remove();
+      }
 
-      play();
+      // Every candidate refused. Swap now, while the user is still reading.
+      box.outerHTML = highlightsFallback(searchUrl);
     }
 
     async function loadHighlights(match, load) {
@@ -2630,10 +2702,11 @@
          video" can actually hold. */
       const ytBox = $("hl-yt");
       if (ytBox) {
-        ytBox.querySelector(".hl-yt-face").addEventListener("click", () => {
-          mountYouTube(ytBox, data.youtube.candidates || [{ id: data.youtube.id,
-            channel: data.youtube.channel, title: data.youtube.title }], data.search_url);
-        }, { once: true });
+        const candidates = data.youtube.candidates ||
+          [{ id: data.youtube.id, channel: data.youtube.channel, title: data.youtube.title }];
+        // Deferred until the panel is actually on screen: nothing is fetched
+        // from YouTube for someone who never opens the Highlights tab.
+        whenHighlightsVisible(() => prepareVideo(ytBox, candidates, data.search_url));
       }
 
       // With a self-hosted clip, a moment carrying a timestamp seeks the player.
