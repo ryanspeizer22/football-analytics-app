@@ -199,6 +199,41 @@ def leaderboard_page(request: Request, slug: str, metric: str = Query("rating"))
     )
 
 
+# Ownership thresholds the differentials view offers, mapped to the filter key
+# the client uses. Kept server-side too so a shared link restores the same view.
+_FPL_OWNERSHIP_FILTERS = {5: "deep", 10: "standard", 20: "wide"}
+
+
+@app.get("/differentials", response_class=HTMLResponse)
+def differentials_page(request: Request, own: str = Query("10")):
+    """Deep link to the FPL differential finder.
+
+    The client pushes /differentials?own=N, so without this route a refresh or
+    a shared link falls through to the API's 404 handler and renders raw JSON
+    instead of the app.
+
+    `own` is validated loosely on purpose. It only picks which ownership pill
+    opens, so a stale or hand-edited value should land on the default view —
+    a 422 here would put the user back in front of raw JSON, which is the bug
+    this route exists to fix. The API endpoint keeps its strict bounds.
+    """
+    try:
+        requested = float(own)
+    except (TypeError, ValueError):
+        requested = 10.0
+    threshold = min(_FPL_OWNERSHIP_FILTERS, key=lambda t: abs(t - requested))
+    return _shell(
+        request,
+        title="FPL differential finder — PitchSense",
+        description=(f"Under-{threshold}%-owned Fantasy Premier League players whose "
+                     "per-90 output outruns their price."),
+        path=f"/differentials?own={threshold}",
+        og_image=f"{BASE_URL}/og/differentials.png",
+        boot={"view": "fpl", "own": threshold,
+              "filter": _FPL_OWNERSHIP_FILTERS[threshold]},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dynamic OpenGraph images
 # ---------------------------------------------------------------------------
@@ -267,6 +302,14 @@ def og_leaderboard(league_id: int, season: int):
     return Response(png, media_type="image/png", headers=_OG_HEADERS)
 
 
+@app.get("/og/differentials.png")
+def og_differentials():
+    png = og_image.generic_card(
+        "FPL Differential Finder", "Under-owned players, ranked by output · PitchSense"
+    )
+    return Response(png, media_type="image/png", headers=_OG_HEADERS)
+
+
 @app.get("/robots.txt", response_class=PlainTextResponse)
 def robots():
     """Allow the app shell, keep crawlers out of the paid API surface."""
@@ -281,12 +324,18 @@ def robots():
 
 @app.get("/sitemap.xml")
 def sitemap():
-    """Single-page app, so one canonical entry."""
+    """The stable landing pages.
+
+    Match and comparison URLs are unbounded and generated on demand, so they
+    stay out; /differentials is a fixed page with its own title and OG card.
+    """
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"  <url><loc>{BASE_URL}/</loc><changefreq>daily</changefreq>"
         "<priority>1.0</priority></url>\n"
+        f"  <url><loc>{BASE_URL}/differentials</loc><changefreq>daily</changefreq>"
+        "<priority>0.8</priority></url>\n"
         "</urlset>\n"
     )
     return Response(content=xml, media_type="application/xml")

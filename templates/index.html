@@ -2214,6 +2214,10 @@
             season: boot?.season ?? null,
             metric: boot?.metric ?? qs.get("metric") ?? "rating",
           });
+        } else if (boot?.view === "fpl" || path === "/differentials") {
+          const own = boot?.own ?? +qs.get("own");
+          const match = FPL_FILTERS.find((x) => x.own === own);
+          await openFpl(boot?.filter ?? match?.key ?? "standard");
         }
       } finally {
         suppressRoute = false;
