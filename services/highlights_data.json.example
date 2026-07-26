@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Licensed video for the Highlights panel, keyed by fixture id.",
+    "Nothing here ships with the app: match footage belongs to whoever filmed",
+    "it. Add only sources you hold the rights to, or that you self-host.",
+    "Copy this file to highlights_data.json to activate it.",
+    "clip_start on a moment (seconds) makes that row seek the player."
+  ],
+  "979139": {
+    "poster": "/static/your-poster.jpg",
+    "credit": "Clip licensed from <rights holder>",
+    "clips": [
+      { "src": "/static/clips/your-clip.mp4", "type": "video/mp4" }
+    ]
+  }
+}

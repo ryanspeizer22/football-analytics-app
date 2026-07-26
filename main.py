@@ -41,6 +41,7 @@ from services import (
     competitions,
     enrich,
     fpl,
+    highlights,
     leaderboard,
     momentum,
     og_image,
@@ -743,6 +744,7 @@ def _store_match_meta(context: dict, fixture_id: int) -> None:
             "away_score": (fx.get("goals") or {}).get("away"),
             "competition": (fx.get("league") or {}).get("name", ""),
             "competition_id": (fx.get("league") or {}).get("id"),
+            "venue": ((fx.get("fixture") or {}).get("venue") or {}).get("name"),
             "date": (fx.get("fixture") or {}).get("date", "")[:10],
             "slug": slugs.match_slug(
                 teams.display_name(home["id"], home["name"]),
@@ -866,6 +868,33 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
     result = textclean.clean(narrative.model_dump())
     result.update(derived)
 
+    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
+    if status in FINISHED_STATUSES:
+        summary_cache.set(cache_key, result)
+    return result
+
+
+@app.get("/api/match/{fixture_id}/highlights")
+def match_highlights(fixture_id: int):
+    """Key moments for a match, plus any licensed video attached to them.
+
+    Deliberately AI-free and unmetered: everything here is derived from the
+    event feed we already hold, so opening the tab costs nothing and is
+    instant. Cached because a finished match's moments never change.
+    """
+    cache_key = f"highlights-{fixture_id}"
+    cached = summary_cache.get(cache_key)
+    if cached is not None:
+        # Clip configuration is re-read every time, so adding footage to
+        # highlights_data.json takes effect without clearing the cache.
+        return {**cached, **highlights.clips_for(fixture_id)}
+
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except api_service.FootballAPIError as exc:
+        raise _api_error(exc) from exc
+
+    result = highlights.build(context, fixture_id)
     status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
     if status in FINISHED_STATUSES:
         summary_cache.set(cache_key, result)

@@ -62,9 +62,15 @@ _RAW: list[tuple[int, str, str, str, str, list[str]]] = [
     (530,  "Atletico Madrid",    "ATM", "#CB3524", "#262E62", ["atletico", "atleti"]),
     (165,  "Borussia Dortmund",  "BVB", "#FDE100", "#000000", ["dortmund", "bvb"]),
     (492,  "Napoli",             "NAP", "#12A0D7", "#003C82", []),
-    # World Cup 2022 finalists
+    # International sides featured in the heritage grid. White-shirted nations
+    # carry their flag colour as the secondary, since readable_color falls back
+    # to it — an achromatic primary would otherwise render as grey.
     (26,   "Argentina",          "ARG", "#75AADB", "#FFFFFF", []),
     (2,    "France",             "FRA", "#21304D", "#EF4135", ["les bleus"]),
+    (6,    "Brazil",             "BRA", "#FEDF00", "#009C3B", ["seleção", "selecao"]),
+    (25,   "Germany",            "GER", "#000000", "#DD0000", ["die mannschaft"]),
+    (768,  "Italy",              "ITA", "#0066CC", "#FFFFFF", ["azzurri", "italia"]),
+    (10,   "England",            "ENG", "#FFFFFF", "#CE1124", ["three lions"]),
 ]
 
 TEAMS: list[dict[str, Any]] = [

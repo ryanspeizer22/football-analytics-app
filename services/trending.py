@@ -1,9 +1,21 @@
 """
 trending.py
 -----------
-Pre-seeded legendary fixtures for the homepage grid. Fixture IDs were
-resolved against API-Football (free-tier seasons 2021-2023) and verified,
-so every card dives straight into a summarizable match with zero friction.
+The heritage grid: matches that earned their place in the game's history,
+not simply recent lopsided scorelines.
+
+Every fixture id here was resolved against API-Football and each was checked
+to build a full analysis context, so a card never opens onto a dead end. Two
+things are worth knowing before adding to this list:
+
+* The provider reaches further back than our own plan window suggests — 2014,
+  2016 and 2020 seasons all return data — but not indefinitely. The 2004-05
+  Champions League returns nothing, which is why Istanbul is absent and La
+  Remontada carries the comeback slot instead.
+* Coverage thins with age. The 2014 World Cup has events but no team or player
+  statistics, so those matches render the narrative and the Match State Index
+  without stat bars or player cards. `thin_data` marks them so the UI can say
+  so rather than looking broken.
 """
 
 from typing import Any
@@ -24,6 +36,7 @@ def _card(
     away_score: int,
     tagline: str,
     badge: str,
+    thin_data: bool = False,
 ) -> dict[str, Any]:
     home_color, away_color = distinct_colors(home_id, away_id)
     return {
@@ -35,6 +48,9 @@ def _card(
         "date": date,
         "tagline": tagline,
         "badge": badge,
+        # True where the provider has events but no team/player statistics, so
+        # the match view can set expectations instead of showing empty panels.
+        "thin_data": thin_data,
         "home": {
             "id": home_id,
             "name": display_name(home_id, home_name),
@@ -55,26 +71,34 @@ def _card(
 TRENDING: list[dict[str, Any]] = [
     _card(979139, "World Cup Final", 1, "2022-12-18",
           26, "Argentina", 3, 2, "France", 3,
-          "The greatest final ever played — Messi vs Mbappé, settled on penalties", "🏆 LEGENDARY"),
+          "Messi and Mbappé trade blows across 120 minutes; settled from twelve yards",
+          "🏆 IMMORTAL"),
+    _card(152855, "Champions League", 2, "2017-03-08",
+          529, "Barcelona", 6, 85, "Paris Saint Germain", 1,
+          "Four down from the first leg — and three goals in the last seven minutes",
+          "🌋 LA REMONTADA"),
+    _card(20496, "La Liga", 140, "2017-04-23",
+          541, "Real Madrid", 2, 529, "Barcelona", 3,
+          "Messi's 500th goal, struck in the 92nd minute, silences the Bernabéu",
+          "👑 EL CLÁSICO"),
+    _card(723370, "Euro Final", 4, "2021-07-11",
+          768, "Italy", 1, 10, "England", 1,
+          "Shaw scores inside two minutes; Italy take Wembley on penalties",
+          "🇮🇹 EURO FINAL"),
+    _card(208317, "World Cup Semi-final", 1, "2014-07-08",
+          6, "Brazil", 1, 25, "Germany", 7,
+          "Five German goals inside half an hour — the host nation's darkest night",
+          "💔 MINEIRAÇO", thin_data=True),
+    _card(857631, "Champions League", 2, "2022-05-04",
+          541, "Real Madrid", 3, 50, "Manchester City", 1,
+          "Rodrygo twice in 90 seconds at the death, then Benzema in extra time",
+          "⚡ BERNABÉU MIRACLE"),
     _card(868201, "Premier League", 39, "2023-03-05",
           40, "Liverpool", 7, 33, "Man United", 0,
-          "Anfield demolition — United's record league defeat", "💀 MASSACRE"),
+          "United's heaviest league defeat in more than ninety years",
+          "💀 ANFIELD ROUT"),
     _card(868033, "Premier League", 39, "2022-10-02",
           50, "Man City", 6, 33, "Man United", 3,
-          "Haaland and Foden hat-tricks in the derby", "⚡ DERBY DAY"),
-    _card(1022982, "Champions League SF", 2, "2023-05-17",
-          50, "Man City", 4, 541, "Real Madrid", 0,
-          "The Etihad statement that launched the treble", "👑 STATEMENT"),
-    _card(857630, "Champions League SF", 2, "2022-04-26",
-          50, "Man City", 4, 541, "Real Madrid", 3,
-          "Seven goals of pure chaos in the first leg", "🔥 CLASSIC"),
-    _card(710643, "Premier League", 39, "2021-10-24",
-          33, "Man United", 0, 40, "Liverpool", 5,
-          "Salah's hat-trick silences Old Trafford", "💀 MASSACRE"),
-    _card(1035545, "Premier League", 39, "2024-05-19",
-          55, "Brentford", 2, 34, "Newcastle", 4,
-          "Six goals and a VAR storm at the Gtech", "⚡ GOAL FEST"),
-    _card(1035544, "Premier League", 39, "2024-05-19",
-          42, "Arsenal", 2, 45, "Everton", 1,
-          "Title-race final day — so close, yet so far", "🎬 FINALE"),
+          "Haaland and Foden both take hat-tricks off their neighbours",
+          "🔥 DERBY DAY"),
 ]
