@@ -679,6 +679,61 @@
       letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 0.25rem;
     }
 
+    /* Cache-status badge in the match header. */
+    .cache-badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.15rem 0.5rem; border-radius: 999px;
+      font-size: 0.62rem; font-weight: 800; letter-spacing: 0.07em;
+    }
+    .cache-badge.cached {
+      color: var(--neon); background: var(--neon-soft);
+      border: 1px solid rgba(55, 240, 162, 0.34);
+    }
+    .cache-badge.fresh {
+      color: var(--premium); background: rgba(240, 196, 55, 0.12);
+      border: 1px solid rgba(240, 196, 55, 0.32);
+    }
+    .cache-badge.locked {
+      color: var(--danger); background: rgba(255, 93, 108, 0.1);
+      border: 1px solid rgba(255, 93, 108, 0.32);
+    }
+
+    /* Free-tier limit dialog. */
+    .modal-scrim {
+      position: fixed; inset: 0; z-index: 260; display: none;
+      align-items: center; justify-content: center; padding: 1.2rem;
+      background: rgba(4, 6, 12, 0.72); backdrop-filter: blur(6px);
+    }
+    .modal-scrim.open { display: flex; animation: viewIn 0.2s ease; }
+    .upgrade-card {
+      position: relative; width: min(460px, 100%);
+      background: var(--glass-strong); border: 1px solid var(--border-bright);
+      border-radius: 18px; padding: 1.6rem 1.5rem 1.3rem; text-align: center;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+    }
+    .upgrade-close {
+      position: absolute; top: 0.7rem; right: 0.8rem;
+      background: none; border: 0; color: var(--text-dim);
+      font-size: 0.9rem; cursor: pointer;
+    }
+    .upgrade-close:hover { color: var(--text); }
+    .upgrade-mark { font-size: 1.8rem; line-height: 1; margin-bottom: 0.5rem; }
+    .upgrade-card h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+    .upgrade-card p { font-size: 0.85rem; color: var(--text-dim); margin: 0 0 0.5rem; line-height: 1.55; }
+    .upgrade-card p strong { color: var(--text); }
+    .upgrade-note {
+      background: var(--neon-soft); border: 1px solid rgba(55, 240, 162, 0.24);
+      border-radius: 10px; padding: 0.55rem 0.7rem; font-size: 0.8rem !important;
+    }
+    .upgrade-actions { display: grid; gap: 0.5rem; margin-top: 1rem; }
+    .upgrade-browse {
+      background: none; border: 1px solid var(--border-bright); border-radius: 10px;
+      color: var(--text); font-family: var(--font); font-weight: 700;
+      font-size: 0.8rem; padding: 0.6rem 1rem; cursor: pointer;
+    }
+    .upgrade-browse:hover { border-color: var(--neon); color: var(--neon); }
+    .upgrade-fine { font-size: 0.68rem !important; opacity: 0.75; margin-top: 0.7rem !important; }
+
     /* ===== Highlights ===== */
     /* Shown when no rights-holder video could be resolved. A link, not a
        player: YouTube removed search embeds, so an iframe pointed at a search
@@ -1738,6 +1793,24 @@
     <button class="cmp-go" id="cmp-go" disabled>Compare</button>
   </div>
 
+    <!-- ================= FREE-TIER LIMIT ================= -->
+  <div class="modal-scrim" id="upgrade-modal">
+    <div class="upgrade-card" role="dialog" aria-modal="true" aria-labelledby="upgrade-title">
+      <button class="upgrade-close" aria-label="Close">✕</button>
+      <div class="upgrade-mark">✨</div>
+      <h2 id="upgrade-title">You have used all <span id="upgrade-used">5</span> free analyses</h2>
+      <p><strong id="upgrade-match"></strong> has not been analysed yet, so opening it
+         would generate a fresh report.</p>
+      <p class="upgrade-note">Every match that has already been analysed stays open to
+         you — browsing those is free and always will be.</p>
+      <div class="upgrade-actions">
+        <button class="cta upgrade-pro" disabled>Pro — unlimited fresh matches</button>
+        <button class="upgrade-browse">Browse analysed matches</button>
+      </div>
+      <p class="upgrade-fine">Pro is not live yet. Nothing is charged.</p>
+    </div>
+  </div>
+
   <div class="cmp-modal" id="cmp-modal" role="dialog" aria-modal="true" aria-label="Player comparison">
     <div class="cmp-panel">
       <button class="drawer-close" id="cmp-close" aria-label="Close">✕</button>
@@ -2197,6 +2270,39 @@
       const superseded = () => activeLoad !== load;
 
       resetMatchPanels();
+
+      /* An unplayed fixture has nothing to analyse — the generation would
+         fail on the server. Say so instead, and never spend a free analysis
+         on it. */
+      if (match.home.score == null || match.away.score == null) {
+        renderScoreboard(match, null);
+        showView("summary");
+        $("summary-loading").hidden = true;
+        $("summary-content").hidden = true;
+        $("summary-error").textContent =
+          "This match has not been played yet, so there is nothing to analyse. " +
+          "Check back after the final whistle.";
+        $("summary-error").hidden = false;
+        return;
+      }
+
+      /* Decide before anything is billed. A cached match is free and opens
+         with no quota touched; a fresh one spends a free analysis, and once
+         those are gone the paid requests are never fired at all. */
+      const status = await matchStatus(match.fixture_id, controller.signal);
+      if (superseded()) return;
+      const isCached = !!(status && status.cached);
+      if (!isCached && !alreadySpentOn(match.fixture_id) && freshRemaining() <= 0) {
+        renderScoreboard(match, { cached: false, blocked: true });
+        showView("summary");
+        $("summary-loading").hidden = true;
+        $("summary-content").hidden = true;
+        $("summary-error").hidden = true;
+        openUpgradeModal(match);
+        return;
+      }
+      if (!isCached) spendFresh(match.fixture_id);
+
       // The tab title is per-match state too. Server-rendered on a deep link,
       // but client-side navigation left the previous fixture's title in place.
       const played = match.home.score !== null && match.home.score !== undefined;
@@ -2205,7 +2311,7 @@
         : `${match.home.name} v ${match.away.name} — PitchSense`;
       setRoute(currentMatchSlug(match));
       setAmbient(match);
-      renderScoreboard(match);
+      renderScoreboard(match, { cached: isCached });
       showView("summary");
       $("summary-content").hidden = true;
       $("summary-error").hidden = true;
@@ -2307,7 +2413,7 @@
       }
     }
 
-    function renderScoreboard(m) {
+    function renderScoreboard(m, state) {
       $("scoreboard").hidden = false;
       $("scoreboard").style.setProperty("--c-home", m.home.color);
       $("scoreboard").style.setProperty("--c-away", m.away.color);
@@ -2315,10 +2421,20 @@
          a child of the centre column. As a grandchild it could only ever be as
          wide as the score, so on narrower screens it wrapped into the crests
          beside it. */
+      /* Says plainly whether opening this cost anything. A cached match is
+         instant and free; a fresh one is being generated now and has spent one
+         of the visitor's free analyses. */
+      const badge = !state ? "" : state.blocked
+        ? `<span class="cache-badge locked">Free analyses used up</span>`
+        : state.cached
+        ? `<span class="cache-badge cached">⚡ Cached · instant</span>`
+        : `<span class="cache-badge fresh">✨ Fresh analysis · ${freshRemaining()} left</span>`;
+
       const meta = [
         `${compLogo(m.competition_id)} ${esc(m.competition)}`,
         esc(m.date),
         m.venue ? esc(m.venue) : "",
+        badge,
       ].filter(Boolean);
 
       $("scoreboard").innerHTML = `
@@ -2327,7 +2443,8 @@
           <div class="bar" style="background:${esc(m.home.color)};color:${esc(m.home.color)}"></div>
         </div>
         <div class="sb-mid">
-          <div class="score">${m.home.score} – ${m.away.score}</div>
+          <div class="score">${m.home.score == null || m.away.score == null
+            ? "v" : `${m.home.score} – ${m.away.score}`}</div>
         </div>
         <div class="sb-team away">
           <div class="sb-id">${crest(m.away, "lg")}<div class="name">${esc(m.away.name)}</div></div>
@@ -2424,6 +2541,82 @@
       requestAnimationFrame(() => requestAnimationFrame(() =>
         document.querySelectorAll(".stat-fill").forEach((f) => (f.style.width = f.dataset.w + "%"))
       ));
+    }
+
+    /* Shown instead of firing a paid generation, once the free ones are gone.
+       Deliberately not a dead end: every already-analysed match stays open, so
+       the button leads back to those rather than only offering to sell. */
+    function openUpgradeModal(match) {
+      const modal = $("upgrade-modal");
+      $("upgrade-match").textContent =
+        `${match.home.name} v ${match.away.name}`;
+      $("upgrade-used").textContent = String(FREE_FRESH_ANALYSES);
+      modal.classList.add("open");
+      modal.querySelector(".upgrade-close").onclick = () => modal.classList.remove("open");
+      modal.querySelector(".upgrade-browse").onclick = () => {
+        modal.classList.remove("open");
+        showView("home", false);
+        setRoute("/");
+      };
+      modal.onclick = (e) => { if (e.target === modal) modal.classList.remove("open"); };
+    }
+
+    /* ======================= Free-tier fresh analyses ======================= */
+
+    /* A visitor gets a handful of fresh generations; cached matches are always
+       free and never counted, since serving one costs nothing.
+
+       Being straight about what this is: a client-side courtesy limit, not
+       enforcement. It lives in localStorage, so clearing site data resets it.
+       The real spend protection is server-side — services/rate_limit.py caps
+       per-client and global generations and only counts cache misses. This
+       exists to set expectations before someone triggers a paid call, not to
+       stop a determined visitor. */
+    const FREE_FRESH_ANALYSES = 5;
+    const QUOTA_KEY = "pitchsense:fresh-analyses";
+
+    function freshUsed() {
+      try {
+        const n = parseInt(localStorage.getItem(QUOTA_KEY) || "0", 10);
+        return Number.isFinite(n) && n > 0 ? Math.min(n, FREE_FRESH_ANALYSES) : 0;
+      } catch {
+        return 0;   // private browsing or storage disabled — never block on it
+      }
+    }
+
+    function freshRemaining() { return Math.max(0, FREE_FRESH_ANALYSES - freshUsed()); }
+
+    function spendFresh(fixtureId) {
+      try {
+        // Keyed by fixture so re-opening a match you already paid for during
+        // this session does not charge twice for the same analysis.
+        const spentKey = QUOTA_KEY + ":ids";
+        const spent = JSON.parse(localStorage.getItem(spentKey) || "[]");
+        if (spent.includes(fixtureId)) return true;
+        if (freshRemaining() <= 0) return false;
+        spent.push(fixtureId);
+        localStorage.setItem(spentKey, JSON.stringify(spent.slice(-50)));
+        localStorage.setItem(QUOTA_KEY, String(freshUsed() + 1));
+        return true;
+      } catch {
+        return true;    // storage unavailable — fail open rather than lock out
+      }
+    }
+
+    function alreadySpentOn(fixtureId) {
+      try {
+        return JSON.parse(localStorage.getItem(QUOTA_KEY + ":ids") || "[]")
+          .includes(fixtureId);
+      } catch { return false; }
+    }
+
+    async function matchStatus(fixtureId, signal) {
+      try {
+        const res = await fetch(`/api/match/${fixtureId}/status`, signal ? { signal } : {});
+        return res.ok ? await res.json() : null;
+      } catch {
+        return null;    // unknown status must not block the match
+      }
     }
 
     /* ============================ Highlights ============================ */

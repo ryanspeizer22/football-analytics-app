@@ -21,7 +21,12 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5"
+# Sonnet by choice, not by default: match analysis is the app's per-request
+# cost centre and this is where it is paid. Opus produced noticeably richer
+# tactical prose; if a future tier wants that back, this is the single line to
+# change (and PREMIUM_MODEL below is here for exactly that).
+MODEL = "claude-sonnet-5"
+PREMIUM_MODEL = "claude-opus-5"
 
 # Beta flag + fallback so a rare safety-classifier decline is transparently
 # re-served by another model instead of failing the request.

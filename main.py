@@ -953,6 +953,34 @@ def _cacheable(context: dict) -> bool:
     return context["fixture"].get("fixture", {}).get("status", {}).get("short") in FINISHED_STATUSES
 
 
+@app.get("/api/match/{fixture_id}/status")
+def match_status(fixture_id: int):
+    """Whether this match has already been analysed.
+
+    Free, instant, and read-only — the client asks before opening a match so it
+    can label it and decide whether a generation is about to be paid for. It
+    deliberately does not write anything back, unlike the read paths, so a
+    status probe never has side effects.
+    """
+    def cached(half: str) -> bool:
+        key = "open" if half == "opening" else "anal"
+        return cache_migrate.first_usable([
+            summary_cache.get(f"{key}-{fixture_id}"),
+            summary_cache.get(f"narr-{fixture_id}"),
+            summary_cache.get(f"match-{fixture_id}"),
+        ], half) is not None
+
+    opening, analysis = cached("opening"), cached("analysis")
+    return {
+        # "Cached" to a visitor means the whole thing lands instantly. A half
+        # cached match still bills a generation, so it does not qualify.
+        "cached": opening and analysis,
+        "opening_cached": opening,
+        "analysis_cached": analysis,
+        "players_cached": summary_cache.get(f"players-{fixture_id}") is not None,
+    }
+
+
 @app.get("/api/match/{fixture_id}/derived")
 def match_derived(fixture_id: int):
     """Momentum, stat comparisons and the headline tiles — no model involved.
