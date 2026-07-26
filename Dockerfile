@@ -26,3 +26,4 @@ EXPOSE 8000
 # loopback peer. Single worker keeps the in-process rate-limit counters
 # authoritative — see LAUNCH.md before scaling out.
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-127.0.0.1}"]
+
