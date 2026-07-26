@@ -467,7 +467,26 @@
     }
     .mc-nums span { color: var(--text-dim); font-size: 0.9rem; margin: 0 0.1rem; }
     .mc-tag { margin-top: 0.7rem; font-size: 0.78rem; color: var(--text-dim); line-height: 1.4; position: relative; z-index: 1; }
-    .mc-date { margin-top: 0.45rem; font-size: 0.68rem; color: var(--text-dim); opacity: 0.7; }
+    .mc-foot {
+      margin-top: 0.5rem; display: flex; align-items: center;
+      justify-content: space-between; gap: 0.5rem;
+      position: relative; z-index: 1;
+    }
+    .mc-date { font-size: 0.68rem; color: var(--text-dim); opacity: 0.7; }
+    /* Says before the click whether opening this costs a free analysis. Empty
+       until the lookup lands, so a card never flashes a wrong state. */
+    .mc-cache {
+      font-size: 0.58rem; font-weight: 800; letter-spacing: 0.06em;
+      padding: 0.12rem 0.42rem; border-radius: 999px; white-space: nowrap;
+    }
+    .mc-cache.cached {
+      color: var(--neon); background: var(--neon-soft);
+      border: 1px solid rgba(55, 240, 162, 0.3);
+    }
+    .mc-cache.fresh {
+      color: var(--premium); background: rgba(240, 196, 55, 0.1);
+      border: 1px solid rgba(240, 196, 55, 0.28);
+    }
     /* Sets expectations before the click: the oldest matches have events but
        no team or player statistics, so the analysis lands without stat bars
        or player cards. Better said up front than discovered as empty panels. */
@@ -733,6 +752,14 @@
     }
     .upgrade-browse:hover { border-color: var(--neon); color: var(--neon); }
     .upgrade-fine { font-size: 0.68rem !important; opacity: 0.75; margin-top: 0.7rem !important; }
+
+    .mvp-stats-note {
+      grid-column: 1 / -1;
+      padding: 0.6rem 0.85rem; border-radius: 10px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border);
+      font-size: 0.76rem; color: var(--text-dim); line-height: 1.5;
+    }
 
     /* ===== Highlights ===== */
     /* Shown when no rights-holder video could be resolved. A link, not a
@@ -1868,6 +1895,35 @@
       navStack = ["home"]; showView("home", false); setAmbient(null); setRoute("/");
     });
 
+    /* Stamps every visible card with whether opening it is free or will spend
+       a fresh analysis. Done after render rather than before, so a grid never
+       waits on it — the lookup reads caches only and returns in milliseconds.
+       Knowing before the click is the whole point: the quota is otherwise spent
+       on a match the visitor could not tell apart from a cached one. */
+    async function decorateCacheBadges(root, signal) {
+      const slots = [...(root || document).querySelectorAll("[data-cache-for]")]
+        .filter((el) => !el.dataset.done);
+      if (!slots.length) return;
+      const ids = [...new Set(slots.map((el) => el.dataset.cacheFor))].filter(Boolean);
+      if (!ids.length) return;
+      try {
+        const res = await fetch(`/api/match-status?ids=${ids.join(",")}`,
+                                signal ? { signal } : {});
+        if (!res.ok) return;
+        const { statuses } = await res.json();
+        for (const el of slots) {
+          const state = statuses[el.dataset.cacheFor];
+          if (!state) continue;
+          el.dataset.done = "1";
+          el.className = "mc-cache " + (state.cached ? "cached" : "fresh");
+          el.textContent = state.cached ? "⚡ Instant" : "✨ Uses 1 free";
+          el.title = state.cached
+            ? "Already analysed — opens instantly and costs nothing"
+            : "Not analysed yet — opening this spends one of your free analyses";
+        }
+      } catch { /* badges are an enhancement; never break a grid over them */ }
+    }
+
     function esc(str) {
       const d = document.createElement("div");
       d.textContent = str ?? "";
@@ -1967,7 +2023,10 @@
           </div>
           ${m.tagline ? `<div class="mc-tag">${esc(m.tagline)}</div>` : ""}
           ${m.thin_data ? `<div class="mc-thin" title="The provider has events for this match but no team or player statistics">Archive match · limited stats</div>` : ""}
-          <div class="mc-date">${esc(m.date)}</div>
+          <div class="mc-foot">
+            <span class="mc-date">${esc(m.date)}</span>
+            <span class="mc-cache" data-cache-for="${m.fixture_id}"></span>
+          </div>
         </button>`;
     }
 
@@ -1987,6 +2046,7 @@
         const res = await fetch("/api/trending");
         trendingCache = (await res.json()).fixtures;
         $("trending-grid").innerHTML = trendingCache.map(matchCardHTML).join("");
+        decorateCacheBadges($("trending-grid"));
         bindMatchCards($("trending-grid"), trendingCache);
       } catch {
         $("trending-grid").innerHTML = `<div class="card error-box">Couldn't load trending matches.</div>`;
@@ -2069,6 +2129,7 @@
         $("select-title").innerHTML =
           `${compLogo(comp.id, "lg")} ${esc(comp.name)} ${esc(seasonLabel(target))} — ${data.count} matches`;
         $("select-grid").innerHTML = selectMatches.map(matchCardHTML).join("");
+        decorateCacheBadges($("select-grid"));
         bindMatchCards($("select-grid"), selectMatches);
       } catch (err) {
         $("select-grid").innerHTML =
@@ -2210,6 +2271,7 @@
           return;
         }
         $("select-grid").innerHTML = selectMatches.map(matchCardHTML).join("");
+        decorateCacheBadges($("select-grid"));
         bindMatchCards($("select-grid"), selectMatches);
       } catch (err) {
         $("select-grid").innerHTML = `<div class="card error-box" style="grid-column:1/-1">${esc(err.message)}</div>`;
@@ -2391,12 +2453,16 @@
             const players = await pRes.json();
             if (superseded()) return;
             renderPlayerCards(players.player_notes || [], match);
+            if (players.source === "statistics") noteStatsOnlyCards();
           })
           .catch((err) => {
             if (superseded() || err.name === "AbortError") return;
-            console.warn("player notes failed", err);
-            $("mvp-grid").innerHTML =
-              `<div class="card notice" style="grid-column:1/-1">Player notes unavailable for this match.</div>`;
+            /* No banner. The server falls back to statistics-built cards, so
+               reaching here means the request itself failed — leave whatever
+               is on screen rather than replacing the grid with an apology. */
+            console.warn("player notes request failed", err);
+            const grid = $("mvp-grid");
+            if (grid.querySelector(".sk")) grid.innerHTML = "";
           });
         return;
       } catch (err) {
@@ -3024,6 +3090,17 @@
       document.querySelector('[data-panel="panel-shockwave"]').classList.add("active");
       document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
       $("panel-shockwave").classList.add("active");
+    }
+
+    /* Marks the grid when the cards came from the statistics rather than from
+       generated commentary — the numbers are real either way, and the reader
+       should know which they are looking at. */
+    function noteStatsOnlyCards() {
+      if ($("mvp-grid").querySelector(".mvp-stats-note")) return;
+      $("mvp-grid").insertAdjacentHTML("afterbegin",
+        `<div class="mvp-stats-note">Ratings and minutes from the official
+           match statistics. Written commentary is not available for this
+           match.</div>`);
     }
 
     /* Placeholder cards while the player pass is still generating. */

@@ -953,6 +953,44 @@ def _cacheable(context: dict) -> bool:
     return context["fixture"].get("fixture", {}).get("status", {}).get("short") in FINISHED_STATUSES
 
 
+def _analysis_cached(fixture_id: int) -> tuple[bool, bool]:
+    """(opening cached, analysis cached) without writing anything back."""
+    def half(name: str) -> bool:
+        key = "open" if name == "opening" else "anal"
+        return cache_migrate.first_usable([
+            summary_cache.get(f"{key}-{fixture_id}"),
+            summary_cache.get(f"narr-{fixture_id}"),
+            summary_cache.get(f"match-{fixture_id}"),
+        ], name) is not None
+    return half("opening"), half("analysis")
+
+
+@app.get("/api/match-status")
+def match_status_bulk(ids: str = Query(..., max_length=1200)):
+    """Cache state for a page of fixtures at once.
+
+    The grids show a badge per card, and one request per card would be absurd
+    for a 60-match league page. Reads only in-memory and on-disk caches, so it
+    stays in the low milliseconds regardless of how many ids are asked for.
+    """
+    wanted, seen = [], set()
+    for raw in ids.split(",")[:120]:
+        raw = raw.strip()
+        if raw.isdigit() and raw not in seen:
+            seen.add(raw)
+            wanted.append(int(raw))
+
+    out = {}
+    for fixture_id in wanted:
+        opening, analysis = _analysis_cached(fixture_id)
+        out[str(fixture_id)] = {
+            # Only the analysis decides whether opening this is charged —
+            # player notes are free for everyone, so they do not gate anything.
+            "cached": opening and analysis,
+        }
+    return {"statuses": out}
+
+
 @app.get("/api/match/{fixture_id}/status")
 def match_status(fixture_id: int):
     """Whether this match has already been analysed.
@@ -962,15 +1000,7 @@ def match_status(fixture_id: int):
     deliberately does not write anything back, unlike the read paths, so a
     status probe never has side effects.
     """
-    def cached(half: str) -> bool:
-        key = "open" if half == "opening" else "anal"
-        return cache_migrate.first_usable([
-            summary_cache.get(f"{key}-{fixture_id}"),
-            summary_cache.get(f"narr-{fixture_id}"),
-            summary_cache.get(f"match-{fixture_id}"),
-        ], half) is not None
-
-    opening, analysis = cached("opening"), cached("analysis")
+    opening, analysis = _analysis_cached(fixture_id)
     return {
         # "Cached" to a visitor means the whole thing lands instantly. A half
         # cached match still bills a generation, so it does not qualify.
@@ -1116,15 +1146,25 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
     except api_service.FootballAPIError as exc:
         raise _api_error(exc) from exc
 
-    with _paid_call(request, f"player notes {fixture_id}"):
-        logger.info("Generating player notes for fixture %s", fixture_id)
-        try:
+    # A failure here no longer 502s. The MVP tab is meant to be populated for
+    # every match, so the measured fallback below stands in — real players,
+    # real ratings, real portraits, assembled from the statistics with no model
+    # involved. Better a card without commentary than an empty grid.
+    try:
+        with _paid_call(request, f"player notes {fixture_id}"):
+            logger.info("Generating player notes for fixture %s", fixture_id)
             notes = ai_summarizer.generate_player_pass(context)
-        except RuntimeError as exc:
-            logger.error("Player pass failed for %s: %s", fixture_id, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (RuntimeError, HTTPException) as exc:
+        logger.warning("Player pass unavailable for %s (%s); using statistics",
+                       fixture_id, exc)
+        fallback = enrich.enrich_player_notes(
+            enrich.notes_from_statistics(context), context)
+        # Deliberately not cached: this is a stand-in, and a later request
+        # should get the real notes rather than inherit the substitute.
+        return _use_photo_proxy({"player_notes": fallback, "source": "statistics"})
 
-    result = textclean.clean({"player_notes": notes.model_dump()["player_notes"]})
+    result = textclean.clean({"player_notes": notes.model_dump()["player_notes"],
+                              "source": "generated"})
     try:
         result["player_notes"] = enrich.enrich_player_notes(
             result["player_notes"], context

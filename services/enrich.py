@@ -130,3 +130,64 @@ def enrich_player_notes(
         logger.info("%d/%d player notes could not be matched to a roster entry",
                     unresolved, len(notes))
     return enriched
+
+
+def notes_from_statistics(match_context: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build player cards straight from the match statistics, with no model.
+
+    Used when the generated notes are unavailable — a failed pass, an exhausted
+    rate limit, a match nobody has analysed yet. Everything here is measured:
+    the rating, the minutes and the goal involvements come from the provider,
+    and the one-line verdict is assembled from those numbers rather than
+    written. That keeps the MVP tab populated with real players and real
+    portraits instead of an apology, and nothing in it is invented.
+    """
+    roster = build_roster(match_context)
+    if not roster:
+        return []
+
+    by_id: dict[int, dict[str, Any]] = {}
+    for team_block in match_context.get("player_statistics") or []:
+        for entry in team_block.get("players") or []:
+            info = entry.get("player") or {}
+            pid = info.get("id")
+            if pid is None or pid not in roster:
+                continue
+            stats = (entry.get("statistics") or [{}])[0]
+            by_id[pid] = stats
+
+    notes = []
+    for pid, player in roster.items():
+        stats = by_id.get(pid) or {}
+        goals = stats.get("goals") or {}
+        passes = stats.get("passes") or {}
+        minutes = player.get("minutes") or 0
+
+        scored = goals.get("total") or 0
+        assisted = goals.get("assists") or 0
+        facts = []
+        if scored:
+            facts.append(f"{scored} goal{'s' if scored > 1 else ''}")
+        if assisted:
+            facts.append(f"{assisted} assist{'s' if assisted > 1 else ''}")
+        if passes.get("key"):
+            facts.append(f"{passes['key']} key passes")
+        if passes.get("accuracy"):
+            facts.append(f"{passes['accuracy']}% passing")
+
+        headline = ", ".join(facts) if facts else (
+            f"{minutes} minutes played" if minutes else "Unused substitute")
+        rating = player.get("rating")
+
+        notes.append({
+            "player_id": pid,
+            "player_name": player.get("name") or "",
+            "team": player.get("team_name") or "",
+            "rating_comment": f"{rating} — {headline}" if rating else headline,
+            # Stated rather than written: this card carries no commentary, and
+            # should not pretend to.
+            "detail": (f"{minutes} minutes on the pitch." if minutes
+                       else "Did not come on."),
+            "from_statistics": True,
+        })
+    return notes
