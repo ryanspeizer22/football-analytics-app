@@ -50,6 +50,7 @@ from services import (
     stats,
     summary_cache,
     teams,
+    textclean,
 )
 from services.trending import TRENDING
 
@@ -721,7 +722,9 @@ def _derived(context: dict, fixture_id: int) -> dict:
     teams_block = context["fixture"]["teams"]
     home_id, away_id = teams_block["home"]["id"], teams_block["away"]["id"]
     try:
-        out["momentum"] = momentum.build_timeline(context["events"], home_id, away_id)
+        out["momentum"] = momentum.build_timeline(
+            context["events"], home_id, away_id, context.get("team_statistics")
+        )
         out["momentum"]["caption"] = momentum.summarize_shift(out["momentum"])
     except Exception:
         logger.exception("Momentum build failed for fixture %s", fixture_id)
@@ -796,7 +799,7 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return textclean.clean(cached)
 
     try:
         context = api_service.build_match_context(fixture_id)
@@ -806,16 +809,22 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
 
     _store_match_meta(context, fixture_id)
 
+    # Derived first: the stat tiles it produces are handed to the model as the
+    # figures already on screen, so the prose stops restating them.
+    derived = _derived(context, fixture_id)
+
     with _paid_call(request, f"narrative {fixture_id}"):
         logger.info("Generating narrative for fixture %s", fixture_id)
         try:
-            narrative = ai_summarizer.generate_narrative(context)
+            narrative = ai_summarizer.generate_narrative(
+                context, derived.get("headline_metrics")
+            )
         except RuntimeError as exc:
             logger.error("Narrative failed for %s: %s", fixture_id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    result = narrative.model_dump()
-    result.update(_derived(context, fixture_id))
+    result = textclean.clean(narrative.model_dump())
+    result.update(derived)
 
     status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
     if status in FINISHED_STATUSES:
@@ -830,7 +839,7 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return _use_photo_proxy(cached)
+            return _use_photo_proxy(textclean.clean(cached))
 
     try:
         context = api_service.build_match_context(fixture_id)
@@ -845,7 +854,7 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
             logger.error("Player pass failed for %s: %s", fixture_id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    result = {"player_notes": notes.model_dump()["player_notes"]}
+    result = textclean.clean({"player_notes": notes.model_dump()["player_notes"]})
     try:
         result["player_notes"] = enrich.enrich_player_notes(
             result["player_notes"], context
@@ -874,7 +883,7 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return _use_photo_proxy(cached)
+            return _use_photo_proxy(textclean.clean(cached))
 
     try:
         context = api_service.build_match_context(fixture_id)
@@ -890,7 +899,7 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
             logger.error("Summary generation failed for %s: %s", fixture_id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    result = summary.model_dump()
+    result = textclean.clean(summary.model_dump())
 
     # Attach real headshots/ratings, and derive the momentum timeline from the
     # timestamped events. Both are enrichment: a failure here must not lose the
@@ -991,7 +1000,7 @@ def match_dossier(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return textclean.clean(cached)
 
     try:
         context = prematch.build_dossier_context(fixture_id)
@@ -1023,7 +1032,7 @@ def match_dossier(request: Request, fixture_id: int, refresh: bool = False):
         # Stated so a thin dossier is visibly thin rather than quietly
         # confident — a newly promoted side has almost no usable record.
         "evidence": prematch.evidence_summary(context),
-        "dossier": dossier.model_dump(),
+        "dossier": textclean.clean(dossier.model_dump()),
     }
     # Safe to cache: the inputs are historical and don't change before kickoff.
     summary_cache.set(cache_key, result)

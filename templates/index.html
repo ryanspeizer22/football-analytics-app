@@ -537,6 +537,32 @@
     }
     .comp-logo.lg { width: 26px; height: 26px; border-radius: 5px; }
 
+    /* The analytical reads. Set apart from the bullet list because they answer
+       a different kind of question — not what happened, but what it meant. */
+    .insight {
+      margin-top: 0.9rem; padding: 0.75rem 0.9rem;
+      background: rgba(255, 255, 255, 0.032);
+      border-left: 2px solid var(--neon);
+      border-radius: 0 10px 10px 0;
+    }
+    .insight + .insight { margin-top: 0.6rem; }
+    .in-label {
+      font-size: 0.7rem; font-weight: 700; color: var(--neon);
+      letter-spacing: 0.04em; margin-bottom: 0.3rem;
+    }
+    .in-body { font-size: 0.88rem; line-height: 1.55; color: var(--text); }
+    .insight .takeaways { margin: 0; }
+
+    .mgr-read {
+      margin-top: 0.85rem; padding-top: 0.7rem;
+      border-top: 1px dashed var(--border);
+      font-size: 0.83rem; line-height: 1.5; color: var(--text);
+    }
+    .mgr-label {
+      display: block; font-size: 0.66rem; font-weight: 700;
+      letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 0.25rem;
+    }
+
     /* Stat bars */
     .stat-row { margin-top: 0.8rem; }
     .stat-label { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-dim); margin-bottom: 0.3rem; }
@@ -1340,6 +1366,7 @@
             <div class="match-headline" id="match-headline" hidden></div>
             <div class="callout-row" id="callout-row"></div>
             <ul class="takeaways" id="momentum-takeaways"></ul>
+            <div id="analysis-blocks"></div>
             <button class="prose-toggle" id="tldr-toggle" hidden>▾ Full recap</button>
             <div class="prose-body" id="tldr-text"></div>
           </div>
@@ -1882,6 +1909,26 @@
       $("momentum-takeaways").innerHTML =
         takeaways.map((t) => `<li>${esc(t)}</li>`).join("");
 
+      /* The analytical reads — what settled it, what the numbers hide, what
+         changed after the bench. Each is omitted when absent rather than shown
+         empty, so summaries cached before these existed still render cleanly. */
+      const insight = (label, body, mark) => body
+        ? `<div class="insight">
+             <div class="in-label">${mark} ${esc(label)}</div>
+             <div class="in-body">${esc(body)}</div>
+           </div>`
+        : "";
+      const shifts = data.tactical_shifts || [];
+      $("analysis-blocks").innerHTML =
+        insight("What decided it", data.decisive_factor, "🎯") +
+        insight("The number that misleads", data.misleading_stat, "🔍") +
+        (shifts.length
+          ? `<div class="insight">
+               <div class="in-label">🔄 After the changes</div>
+               <ul class="takeaways compact">${shifts.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+             </div>`
+          : "");
+
       // Full prose is kept, but folded away so the panel opens scannable.
       const tldrBody = $("tldr-text");
       const tldrToggle = $("tldr-toggle");
@@ -1919,6 +1966,11 @@
                 <div class="stat-track"><div class="stat-fill" data-w="${b.value}"></div></div>
               </div>`).join("")}
             ${chips.length ? `<div class="chip-row">${chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}</div>` : ""}
+            ${t.manager_takeaway ? `
+              <div class="mgr-read">
+                <span class="mgr-label">Manager's read</span>
+                ${esc(t.manager_takeaway)}
+              </div>` : ""}
             ${bullets.length ? `
               <button class="prose-toggle" data-prose="prose-${i}">▾ Full analysis</button>
               <div class="prose-body" id="prose-${i}" hidden>${esc(t.narrative)}</div>` : ""}

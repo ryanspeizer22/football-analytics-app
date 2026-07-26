@@ -13,10 +13,13 @@ ANTHROPIC_API_KEY environment variable (or log in with `ant auth login`).
 """
 
 import json
+import logging
 from typing import Any, Optional
 
 import anthropic
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-5"
 
@@ -51,6 +54,7 @@ class TeamBreakdown(BaseModel):
     narrative: str        # how the match unfolded for this team
     bullets: list[str]    # 3-4 scannable takeaways, each under ~14 words
     key_stats: list[str]  # standout numbers, e.g. "62% possession", "18 shots"
+    manager_takeaway: str  # what this result tells that manager, as a read
 
 
 class MatchSummary(BaseModel):
@@ -66,9 +70,16 @@ class MatchNarrative(BaseModel):
 
     Split out because it is a fraction of the output volume and can therefore
     be shown while the far longer per-player pass is still running.
+
+    The analytical fields exist because a recap that restates the scoreboard
+    adds nothing the stat tiles above it haven't already shown. These four ask
+    the questions a reader actually has once they know the score.
     """
     headline: str
     tldr: str
+    decisive_factor: str          # what actually settled the match
+    misleading_stat: str          # a headline number that misreads the game
+    tactical_shifts: list[str]    # what changed after substitutions / at the break
     momentum_takeaways: list[str]
     team_breakdowns: list[TeamBreakdown]
 
@@ -218,8 +229,68 @@ def _strip_players(match_context: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in match_context.items() if k != "player_statistics"}
 
 
-def generate_narrative(match_context: dict[str, Any]) -> MatchNarrative:
-    """Generate the headline, TL;DR, momentum bullets and team breakdowns."""
+def _displayed_metrics(headline_metrics: Optional[list[dict[str, Any]]]) -> str:
+    """Render the stat tiles the page already shows, for the prompt to avoid.
+
+    Without this the model has no way to know those numbers are on screen, so
+    it spends its bullets and its prose repeating them — the same figure in the
+    tile, the bullet and the paragraph.
+    """
+    if not headline_metrics:
+        return ""
+    lines = [
+        f"- {m.get('label')}: {m.get('home')} vs {m.get('away')}"
+        for m in headline_metrics
+    ]
+    return (
+        "\nThese figures are ALREADY displayed on the page as large stat tiles "
+        "directly above your text:\n" + "\n".join(lines) +
+        "\nDo not restate them as the point of a bullet or a sentence. You may "
+        "refer to one only when you are adding something it does not say — what "
+        "it caused, what it conceals, or how it changed within the match.\n"
+    )
+
+
+def _is_complete(narrative: MatchNarrative) -> bool:
+    """Whether a parsed narrative actually carries an analysis.
+
+    A structured response can satisfy the schema while being hollow — every
+    required field present, but the lists empty and the analytical strings
+    blank. That parses cleanly, so nothing downstream objects, and it gets
+    cached as though it were a real analysis. Seen in practice: one generation
+    returned only a headline and TL;DR and was cached in that state.
+    """
+    return bool(
+        narrative.headline
+        and narrative.tldr
+        and narrative.team_breakdowns
+        and narrative.momentum_takeaways
+    )
+
+
+def generate_narrative(match_context: dict[str, Any],
+                       headline_metrics: Optional[list[dict[str, Any]]] = None) -> MatchNarrative:
+    """Generate the headline, TL;DR, analysis and team breakdowns.
+
+    Retries once on a hollow response rather than returning it: the result is
+    cached by the caller, so a stub would persist until someone forced a
+    refresh.
+    """
+    for attempt in (1, 2):
+        narrative = _narrative_attempt(match_context, headline_metrics)
+        if _is_complete(narrative):
+            return narrative
+        logger.warning(
+            "Narrative attempt %d returned an incomplete analysis "
+            "(breakdowns=%d, takeaways=%d); %s",
+            attempt, len(narrative.team_breakdowns), len(narrative.momentum_takeaways),
+            "retrying" if attempt == 1 else "giving up",
+        )
+    raise RuntimeError("The model returned an incomplete analysis for this match.")
+
+
+def _narrative_attempt(match_context: dict[str, Any],
+                       headline_metrics: Optional[list[dict[str, Any]]]) -> MatchNarrative:
     response = _client().messages.parse(
         model=MODEL,
         max_tokens=8000,
@@ -228,13 +299,33 @@ def generate_narrative(match_context: dict[str, Any]) -> MatchNarrative:
         messages=[{
             "role": "user",
             "content": (
-                "Write the match narrative for a scannable dashboard:\n"
+                "Write the match analysis for a scannable dashboard.\n\n"
+                "The reader can already see the scoreline, the scorers and the "
+                "headline statistics. Your job is to explain the match, not to "
+                "report it. Every field should tell them something they could "
+                "not get by looking at the numbers.\n\n"
                 "- headline: 6-10 words, the match in one punchy line.\n"
-                "- momentum_takeaways: 3-4 bullets tracing how control shifted, "
+                "- tldr: 2-3 sentences on what happened and why. No stat dump.\n"
+                "- decisive_factor: the one thing that actually settled it — a "
+                "tactical mismatch, a passage of play, a substitution, an "
+                "individual. Name it and say why it was decisive.\n"
+                "- misleading_stat: a headline number that misreads this game, "
+                "and what the data shows was really going on. If every number "
+                "genuinely reflects the match, say so plainly instead of "
+                "manufacturing a contradiction.\n"
+                "- tactical_shifts: 2-4 bullets on what changed after the "
+                "substitutions or at the break, tied to the minute. If the "
+                "data does not show a shift, return fewer bullets.\n"
+                "- momentum_takeaways: 3-4 bullets tracing how control moved, "
                 "each naming the minute or passage that caused the swing.\n"
-                "- Per team, `verdict` is 3-6 words; `bullets` are 3-4 concrete "
-                "takeaways under ~14 words each; `narrative` is the fuller prose.\n"
-                "Bullets must not restate each other or the headline.\n\n"
+                "- Per team: `verdict` is 3-6 words; `bullets` are 3-4 concrete "
+                "takeaways under ~14 words; `narrative` is the fuller prose; "
+                "`manager_takeaway` is one sentence on what this result tells "
+                "that manager about their side.\n\n"
+                "Never repeat a number in more than one place. A figure used in "
+                "a bullet must not reappear in that team's narrative, and "
+                "nothing should echo the headline."
+                f"{_displayed_metrics(headline_metrics)}\n"
                 f"Match data:\n{json.dumps(_strip_players(match_context), ensure_ascii=False)}"
             ),
         }],
