@@ -324,7 +324,8 @@
       transform: translateY(-2px); border-color: var(--neon);
       box-shadow: 0 0 20px var(--neon-soft);
     }
-    .comp-chip .emoji { font-size: 1rem; }
+    .comp-chip .comp-logo { width: 22px; height: 22px; vertical-align: middle; }
+    .comp-chip[disabled] .comp-logo { filter: grayscale(1); }
     .comp-chip .season-hint { color: var(--text-dim); font-size: 0.7rem; font-weight: 500; }
     .comp-chip[disabled] { opacity: 0.4; cursor: not-allowed; }
     .comp-chip[disabled]:hover { transform: none; border-color: var(--border); box-shadow: none; }
@@ -1477,6 +1478,13 @@
       return d.innerHTML;
     }
 
+    /* Badge assets are cached hard (a week) because a crest almost never
+       changes. That makes a change in what we serve for a given id invisible
+       to anyone who already has the old one — when the competition placeholder
+       was replaced, every previous visitor kept the grey shield until their
+       cache expired. Bump this whenever the mapping or the fallback changes. */
+    const ASSET_V = "2";
+
     /* A club crest, falling back to the team's colour chip.
        Never `loading="lazy"`: these render inside tab panels that start
        display:none, and a lazy image in a hidden panel is never fetched at
@@ -1485,7 +1493,7 @@
       const color = esc(team?.color || "#7c869c");
       const id = team?.id;
       const img = id
-        ? `<img src="/api/crest/${encodeURIComponent(id)}" alt="" loading="eager"
+        ? `<img src="/api/crest/${encodeURIComponent(id)}?v=${ASSET_V}" alt="" loading="eager"
              onerror="this.remove()">`
         : "";
       return `<span class="crest ${cls}" style="--c:${color}">${img}</span>`;
@@ -1496,7 +1504,7 @@
     function compLogo(competitionId, cls = "") {
       if (!competitionId) return "";
       return `<img class="comp-logo ${cls}" alt="" loading="eager"
-                src="/api/competition-logo/${encodeURIComponent(competitionId)}"
+                src="/api/competition-logo/${encodeURIComponent(competitionId)}?v=${ASSET_V}"
                 onerror="this.remove()">`;
     }
 
@@ -1588,7 +1596,7 @@
               ${comps.map((c) => `
                 <button class="comp-chip" data-comp="${c.id}" ${c.available ? "" : "disabled"}
                         title="${c.available ? "Seasons: " + c.seasons.join(", ") : "Not available on the current plan"}">
-                  <span class="emoji">${esc(c.emoji)}</span>
+                  ${compLogo(c.id)}
                   <span>${esc(c.name)}</span>
                   ${c.default_season ? `<span class="season-hint">${seasonLabel(c.default_season)}</span>` : ""}
                 </button>`).join("")}
@@ -1617,7 +1625,8 @@
       currentComp = comp;
       const target = season || comp.default_season;
 
-      $("select-title").textContent = `${comp.emoji} ${comp.name} ${seasonLabel(target)}`;
+      $("select-title").innerHTML =
+        `${compLogo(comp.id, "lg")} ${esc(comp.name)} ${esc(seasonLabel(target))}`;
       renderSeasonBar(comp, target);
       $("select-grid").innerHTML =
         `<div class="loader" style="grid-column:1/-1"><div class="radar"></div>
@@ -1635,8 +1644,8 @@
             `<div class="card notice" style="grid-column:1/-1">No finished fixtures yet for ${esc(comp.name)} ${seasonLabel(target)}.</div>`;
           return;
         }
-        $("select-title").textContent =
-          `${comp.emoji} ${comp.name} ${seasonLabel(target)} — ${data.count} matches`;
+        $("select-title").innerHTML =
+          `${compLogo(comp.id, "lg")} ${esc(comp.name)} ${esc(seasonLabel(target))} — ${data.count} matches`;
         $("select-grid").innerHTML = selectMatches.map(matchCardHTML).join("");
         bindMatchCards($("select-grid"), selectMatches);
       } catch (err) {
@@ -1745,7 +1754,7 @@
       for (const c of data.competitions || []) {
         html += `
           <button class="drop-item" data-comp="${c.id}">
-            <span class="emoji">${esc(c.emoji)}</span>
+            ${compLogo(c.id)}
             <strong>${esc(c.name)}</strong>
             <span class="sub">${c.available ? "browse season →" : "not on this plan"}</span>
           </button>`;

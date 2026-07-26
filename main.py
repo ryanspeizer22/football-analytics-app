@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 # ANTHROPIC_API_KEY from the environment when the module is imported.
 load_dotenv()
 
+import hashlib
 import json
 import logging
 import os
@@ -419,6 +420,9 @@ def _fixture_card(f: dict) -> dict:
         "fixture_id": f["fixture"]["id"],
         "date": f["fixture"]["date"][:10],
         "competition": f["league"]["name"],
+        # Addresses the competition badge on the card; without it the card
+        # falls back to a bare text label.
+        "competition_id": f["league"].get("id"),
         "home": {
             "id": home["id"],
             "name": teams.display_name(home["id"], home["name"]),
@@ -486,6 +490,21 @@ def list_competitions():
     }
 
 
+def _stamp_competition(payload: dict) -> dict:
+    """Ensure every fixture card carries the competition id for its badge.
+
+    These payloads are cached as fully-built cards, so entries written before
+    the badge existed have no competition id and would render a bare text
+    label forever. The id is on the payload already, so filling it in here
+    repairs them on read rather than needing the caches thrown away.
+    """
+    comp_id = (payload.get("competition") or {}).get("id")
+    if comp_id:
+        for card in payload.get("fixtures") or []:
+            card.setdefault("competition_id", comp_id)
+    return payload
+
+
 @app.get("/api/competitions/{competition_id}/fixtures")
 def competition_fixtures(
     competition_id: int,
@@ -517,7 +536,7 @@ def competition_fixtures(
     cache_key = f"comp-{competition_id}-{season}" + (f"-t{team}" if team else "")
     cached = summary_cache.get(cache_key)
     if cached is not None:
-        return cached
+        return _stamp_competition(cached)
 
     try:
         if team:
@@ -588,10 +607,32 @@ def team_crest(team_id: int):
     return _serve_media("teams", team_id, "Crest")
 
 
+# The provider returns a generic grey shield, byte-identical every time, for
+# competitions it holds no artwork for — the World Cup among them. It arrives
+# as a normal 200 with a valid PNG, so only the content identifies it.
+_PLACEHOLDER_LOGO_MD5 = "3617b8094f9ea8c81f6d0beff671978b"
+
+
 @app.get("/api/competition-logo/{league_id}")
 def competition_logo(league_id: int):
-    """Official competition logo."""
-    return _serve_media("leagues", league_id, "Competition")
+    """Official competition logo, or a typographic emblem if there isn't one.
+
+    Never falls back to a national flag: England, Spain, Italy, Germany and
+    France each run several competitions here, so a flag identifies the country
+    and not the competition — which is the regression this replaced.
+    """
+    try:
+        response = _serve_media("leagues", league_id, "Competition")
+        if hashlib.md5(response.body).hexdigest() != _PLACEHOLDER_LOGO_MD5:
+            return response
+        logger.info("Provider has no artwork for competition %s; using emblem", league_id)
+    except HTTPException:
+        logger.info("Competition logo unavailable for %s; using emblem", league_id)
+
+    comp = competitions.get_competition(league_id)
+    short = (comp or {}).get("short") or str(league_id)
+    return Response(og_image.competition_emblem(short),
+                    media_type="image/png", headers=_MEDIA_HEADERS)
 
 
 @app.get("/api/fixtures/upcoming")
