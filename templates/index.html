@@ -2506,26 +2506,18 @@
         const opts = { signal: controller.signal };
         /* Everything free goes first. The highlights reel and the momentum
            chart are pure computation over cached data — a millisecond each —
-           so there is no reason for them to wait behind a generation. The
-           panel is populated before the model has written a word. */
+           so there is no reason for them to wait behind a generation. */
         loadHighlights(match, load);
         fetch(`/api/match/${match.fixture_id}/derived`, opts)
           .then((r) => r.ok ? r.json() : null)
-          .then((d) => {
-            if (!d || superseded()) return;
-            paintDerived(d, match);
-          })
+          .then((d) => { if (d && !superseded()) paintDerived(d, match); })
           .catch(() => {});
 
-        /* All three fired at once. The opening is a fraction of the output
-           volume — roughly 470 tokens against 3,700 — so it lands in about ten
-           seconds while the analysis and the per-player pass are still running.
-           The page paints from the top rather than waiting on the whole report. */
-        const openingReq  = fetch(`/api/match/${match.fixture_id}/opening`, opts);
-        const analysisReq = fetch(`/api/match/${match.fixture_id}/analysis`, opts);
-        const playersReq  = fetch(`/api/match/${match.fixture_id}/players`, opts);
+        const get = (path) => fetch(`/api/match/${match.fixture_id}/${path}`, opts);
 
-        const oRes = await openingReq;
+        /* The opening always leads: it is the smallest pass and what the page
+           paints first. */
+        const oRes = await get("opening");
         if (superseded()) return;
         if (!oRes.ok) throw new Error((await oRes.json().catch(() => ({}))).detail || `Request failed (${oRes.status})`);
         const opening = await oRes.json();
@@ -2537,42 +2529,55 @@
         setAnalysisLoading(true);
         setMvpLoading(true);
 
-        analysisReq
-          .then(async (aRes) => {
+        /* How the remaining two are issued depends on whether they will cost
+           anything. Cached, they are millisecond reads and firing them together
+           is free. Uncached, three simultaneous model calls hit both our own
+           concurrency cap and the provider's per-minute ceiling — and the
+           failure lands as a 429 on work already half done. So they are chained
+           instead. The opening has already painted either way, so the wait is
+           on depth rather than on anything the reader is looking at. */
+        const fillAnalysis = async () => {
+          try {
+            const res = await get("analysis");
             if (superseded()) return;
-            if (!aRes.ok) throw new Error(`analysis ${aRes.status}`);
-            const analysis = await aRes.json();
+            if (!res.ok) throw new Error(`analysis ${res.status}`);
+            const analysis = await res.json();
             if (superseded()) return;
             setAnalysisLoading(false);
             renderAnalysis(analysis, match);
-          })
-          .catch((err) => {
+          } catch (err) {
             if (superseded() || err.name === "AbortError") return;
             console.warn("analysis failed", err);
             setAnalysisLoading(false);
             $("tactical-grid").innerHTML =
               `<div class="card notice" style="grid-column:1/-1">The deeper analysis is unavailable for this match.</div>`;
-          });
+          }
+        };
 
-        // Players fill in behind; a failure here must not blank the report.
-        playersReq
-          .then(async (pRes) => {
+        const fillPlayers = async () => {
+          try {
+            const res = await get("players");
             if (superseded()) return;
-            if (!pRes.ok) throw new Error(`players ${pRes.status}`);
-            const players = await pRes.json();
+            if (!res.ok) throw new Error(`players ${res.status}`);
+            const players = await res.json();
             if (superseded()) return;
             renderPlayerCards(players.player_notes || [], match);
             if (players.source === "statistics") noteStatsOnlyCards();
-          })
-          .catch((err) => {
+          } catch (err) {
             if (superseded() || err.name === "AbortError") return;
-            /* No banner. The server falls back to statistics-built cards, so
-               reaching here means the request itself failed — leave whatever
-               is on screen rather than replacing the grid with an apology. */
             console.warn("player notes request failed", err);
             const grid = $("mvp-grid");
             if (grid.querySelector(".sk")) grid.innerHTML = "";
-          });
+          }
+        };
+
+        if (isCached) {
+          fillAnalysis();
+          fillPlayers();
+        } else {
+          // Chained, not awaited by the caller: the page is already usable.
+          (async () => { await fillAnalysis(); await fillPlayers(); })();
+        }
         return;
       } catch (err) {
         // A superseded load is not a failure — the user simply moved on.

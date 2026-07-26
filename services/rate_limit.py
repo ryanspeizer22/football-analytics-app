@@ -32,6 +32,39 @@ PER_CLIENT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "360
 DAILY_MAX = int(os.environ.get("RATE_LIMIT_DAILY_MAX", "150"))
 MAX_CONCURRENT = int(os.environ.get("RATE_LIMIT_MAX_CONCURRENT", "3"))
 
+# Addresses that count as "this machine".
+LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _bypass_enabled() -> bool:
+    """Whether loopback callers skip the per-client and concurrency limits.
+
+    This is deliberately not a plain "is the caller 127.0.0.1" check, and the
+    distinction matters more than it looks. `_client_id` ignores
+    X-Forwarded-For on purpose — without a trusted-proxy allowlist any caller
+    could spoof it — which means that behind a reverse proxy on the same host,
+    *every* production request arrives as 127.0.0.1. An address-only bypass
+    would therefore switch off all cost protection the moment the app was
+    deployed behind nginx, and do it silently.
+
+    So the bypass also requires that the app is not configured for a public
+    origin. Setting PITCHSENSE_BASE_URL to a real domain, which deployment
+    requires anyway for canonical links and OG images, disables it on its own.
+    RATE_LIMIT_BYPASS_LOCAL forces the decision either way:
+
+        RATE_LIMIT_BYPASS_LOCAL=1  always bypass loopback  (local only)
+        RATE_LIMIT_BYPASS_LOCAL=0  never bypass            (safe default in prod)
+    """
+    override = os.environ.get("RATE_LIMIT_BYPASS_LOCAL")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes", "on")
+    base = os.environ.get("PITCHSENSE_BASE_URL", "")
+    return (not base) or any(host in base for host in ("127.0.0.1", "localhost"))
+
+
+def is_local(client_id: str) -> bool:
+    return client_id in LOOPBACK
+
 
 class RateLimitExceeded(Exception):
     """Raised when a paid call would breach a limit. Carries a Retry-After."""
@@ -79,8 +112,22 @@ class guard:
     def __enter__(self) -> "guard":
         global _day_count, _in_flight
         now = time.time()
+        local = is_local(self.client_id) and _bypass_enabled()
         with _lock:
             _roll_day(now)
+
+            # Local development still counts toward the daily total — that is
+            # the guard against an accidentally expensive afternoon, and it is
+            # worth keeping. What it skips is the per-client window and the
+            # concurrency cap, which are there to stop one visitor crowding
+            # out others and have no meaning when the visitor is you.
+            if local:
+                hits = _client_hits[self.client_id]
+                _prune(hits, now)
+                hits.append(now)
+                _day_count += 1
+                _in_flight += 1
+                return self
 
             if _day_count >= DAILY_MAX:
                 # Seconds until the next UTC midnight.
@@ -138,4 +185,5 @@ def snapshot() -> dict[str, int]:
             "daily_remaining": max(0, DAILY_MAX - _day_count),
             "in_flight": _in_flight,
             "max_concurrent": MAX_CONCURRENT,
+            "local_bypass": _bypass_enabled(),
         }
