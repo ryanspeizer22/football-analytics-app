@@ -25,7 +25,11 @@ long requests, and offer a mountable volume.
 
 ```
 Service       Docker, from the repo Dockerfile
-Volume        mount at /app/.cache   (10GB is generous; today it is ~200MB)
+Volume        mount at /app/.cache   (size is plan-capped: 500MB on Railway's
+                                     trial, up to 50GB on Pro. Render's disk:
+                                     block asks for 10GB. Real usage is ~39MB,
+                                     so even the trial cap is ample; volumes
+                                     resize up with no downtime on paid plans.)
 Health check  GET /health
 Start         already in the Dockerfile (--proxy-headers is set)
 ```
@@ -47,8 +51,11 @@ that works. And a service with a volume attached can no longer run two
 deployments at once, so redeploys take a few seconds of downtime even with the
 health check configured.
 
-To verify it took: the app logs a warning at startup when `/app/.cache` is not
-a mount point (`main.py`), so a clean startup log is the confirmation.
+To verify it took, look for Railway's own `Mounting volume on: …` line in the
+deploy log. Do **not** rely on the app's mount-point warning as the signal: the
+check at `main.py:109` is gated behind `is_production`, which is false whenever
+`PITCHSENSE_BASE_URL` is unset — so on a misconfigured service it stays silent
+whether or not the volume is mounted.
 
 **Set `FORWARDED_ALLOW_IPS` to your platform's proxy address, and never to
 `*`.** This is the one setting here that silently costs money if it is wrong.
