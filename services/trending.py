@@ -14,6 +14,7 @@ from services.teams import display_name, distinct_colors
 def _card(
     fixture_id: int,
     competition: str,
+    competition_id: int,
     date: str,
     home_id: int,
     home_name: str,
@@ -28,6 +29,9 @@ def _card(
     return {
         "fixture_id": fixture_id,
         "competition": competition,
+        # The label above is editorial ("Champions League SF"); this is the
+        # real league id, which is what addresses the competition logo.
+        "competition_id": competition_id,
         "date": date,
         "tagline": tagline,
         "badge": badge,
@@ -49,28 +53,28 @@ def _card(
 
 
 TRENDING: list[dict[str, Any]] = [
-    _card(979139, "World Cup Final", "2022-12-18",
+    _card(979139, "World Cup Final", 1, "2022-12-18",
           26, "Argentina", 3, 2, "France", 3,
           "The greatest final ever played — Messi vs Mbappé, settled on penalties", "🏆 LEGENDARY"),
-    _card(868201, "Premier League", "2023-03-05",
+    _card(868201, "Premier League", 39, "2023-03-05",
           40, "Liverpool", 7, 33, "Man United", 0,
           "Anfield demolition — United's record league defeat", "💀 MASSACRE"),
-    _card(868033, "Premier League", "2022-10-02",
+    _card(868033, "Premier League", 39, "2022-10-02",
           50, "Man City", 6, 33, "Man United", 3,
           "Haaland and Foden hat-tricks in the derby", "⚡ DERBY DAY"),
-    _card(1022982, "Champions League SF", "2023-05-17",
+    _card(1022982, "Champions League SF", 2, "2023-05-17",
           50, "Man City", 4, 541, "Real Madrid", 0,
           "The Etihad statement that launched the treble", "👑 STATEMENT"),
-    _card(857630, "Champions League SF", "2022-04-26",
+    _card(857630, "Champions League SF", 2, "2022-04-26",
           50, "Man City", 4, 541, "Real Madrid", 3,
           "Seven goals of pure chaos in the first leg", "🔥 CLASSIC"),
-    _card(710643, "Premier League", "2021-10-24",
+    _card(710643, "Premier League", 39, "2021-10-24",
           33, "Man United", 0, 40, "Liverpool", 5,
           "Salah's hat-trick silences Old Trafford", "💀 MASSACRE"),
-    _card(1035545, "Premier League", "2024-05-19",
+    _card(1035545, "Premier League", 39, "2024-05-19",
           55, "Brentford", 2, 34, "Newcastle", 4,
           "Six goals and a VAR storm at the Gtech", "⚡ GOAL FEST"),
-    _card(1035544, "Premier League", "2024-05-19",
+    _card(1035544, "Premier League", 39, "2024-05-19",
           42, "Arsenal", 2, 45, "Everton", 1,
           "Title-race final day — so close, yet so far", "🎬 FINALE"),
 ]

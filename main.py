@@ -68,11 +68,18 @@ app = FastAPI(
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Player headshots are proxied rather than hotlinked: serving them same-origin
-# keeps them out of reach of third-party-media blockers, and the on-disk cache
-# means a given player is fetched from the provider CDN at most once.
+# Provider media (headshots, club crests, competition logos) is proxied rather
+# than hotlinked: serving it same-origin keeps it out of reach of third-party-
+# media blockers, and the on-disk cache means a given asset is fetched from the
+# provider CDN at most once. None of it costs football-API quota — the media
+# CDN is a separate host from the data API.
 PHOTO_CACHE_DIR = Path(".cache/photos")
 PHOTO_CDN = "https://media.api-sports.io/football/players/{player_id}.png"
+
+# The CDN addresses every asset by id under a per-kind path, so a crest or a
+# competition logo needs no stored URL — only the id we already have.
+_MEDIA_CDN = "https://media.api-sports.io/football/{kind}/{asset_id}.png"
+_MEDIA_KINDS = {"players": "photos", "teams": "crests", "leagues": "competitions"}
 
 
 def _client_id(request: Request) -> str:
@@ -535,42 +542,55 @@ def competition_fixtures(
     return result
 
 
-@app.get("/api/player-photo/{player_id}")
-def player_photo(player_id: int):
-    """Serve a player headshot same-origin, caching it on first request.
+_MEDIA_HEADERS = {"Cache-Control": "public, max-age=604800"}
 
-    Hotlinking the provider CDN made rendering dependent on a third-party
-    host that privacy extensions commonly block; proxying removes that
-    failure mode and costs no football-API quota (the media CDN is separate).
+
+def _serve_media(kind: str, asset_id: int, label: str) -> Response:
+    """Serve one provider image same-origin, caching it on first request.
+
+    Hotlinking the provider CDN made rendering dependent on a third-party host
+    that privacy extensions commonly block; proxying removes that failure mode.
     """
-    if player_id <= 0:
-        raise HTTPException(status_code=400, detail="Invalid player id.")
+    if asset_id <= 0:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} id.")
 
-    cached = PHOTO_CACHE_DIR / f"{player_id}.png"
+    cache_dir = PHOTO_CACHE_DIR.parent / _MEDIA_KINDS[kind]
+    cached = cache_dir / f"{asset_id}.png"
     if cached.exists():
-        return Response(
-            content=cached.read_bytes(),
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=604800"},
-        )
+        return Response(cached.read_bytes(), media_type="image/png",
+                        headers=_MEDIA_HEADERS)
 
     try:
-        resp = requests.get(PHOTO_CDN.format(player_id=player_id), timeout=10)
+        resp = requests.get(_MEDIA_CDN.format(kind=kind, asset_id=asset_id), timeout=10)
         resp.raise_for_status()
     except requests.RequestException as exc:
-        logger.info("Headshot unavailable for player %s: %s", player_id, exc)
-        raise HTTPException(status_code=404, detail="Headshot unavailable.") from exc
+        logger.info("%s image unavailable for %s: %s", label, asset_id, exc)
+        raise HTTPException(status_code=404, detail=f"{label} image unavailable.") from exc
 
     if not resp.headers.get("content-type", "").startswith("image/"):
-        raise HTTPException(status_code=404, detail="Headshot unavailable.")
+        raise HTTPException(status_code=404, detail=f"{label} image unavailable.")
 
-    PHOTO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     cached.write_bytes(resp.content)
-    return Response(
-        content=resp.content,
-        media_type="image/png",
-        headers={"Cache-Control": "public, max-age=604800"},
-    )
+    return Response(resp.content, media_type="image/png", headers=_MEDIA_HEADERS)
+
+
+@app.get("/api/player-photo/{player_id}")
+def player_photo(player_id: int):
+    """Player headshot. Path kept as-is — it is baked into cached summaries."""
+    return _serve_media("players", player_id, "Headshot")
+
+
+@app.get("/api/crest/{team_id}")
+def team_crest(team_id: int):
+    """Official club crest."""
+    return _serve_media("teams", team_id, "Crest")
+
+
+@app.get("/api/competition-logo/{league_id}")
+def competition_logo(league_id: int):
+    """Official competition logo."""
+    return _serve_media("leagues", league_id, "Competition")
 
 
 @app.get("/api/fixtures/upcoming")
@@ -671,16 +691,18 @@ def _store_match_meta(context: dict, fixture_id: int) -> None:
     try:
         fx = context["fixture"]
         home, away = fx["teams"]["home"], fx["teams"]["away"]
-        home_color, away_color = teams.distinct_colors(home["id"], away["id"])
         summary_cache.set(f"meta-{fixture_id}", {
             "home": teams.display_name(home["id"], home["name"]),
             "away": teams.display_name(away["id"], away["name"]),
+            # Ids, not URLs: they address the crest and drive the colour, so a
+            # palette change reaches old entries without a cache flush.
+            "home_id": home["id"],
+            "away_id": away["id"],
             "home_score": (fx.get("goals") or {}).get("home"),
             "away_score": (fx.get("goals") or {}).get("away"),
             "competition": (fx.get("league") or {}).get("name", ""),
+            "competition_id": (fx.get("league") or {}).get("id"),
             "date": (fx.get("fixture") or {}).get("date", "")[:10],
-            "home_color": home_color,
-            "away_color": away_color,
             "slug": slugs.match_slug(
                 teams.display_name(home["id"], home["name"]),
                 teams.display_name(away["id"], away["name"]),
@@ -714,6 +736,36 @@ def _derived(context: dict, fixture_id: int) -> dict:
     return out
 
 
+def _with_club_colors(rows: list[dict]) -> list[dict]:
+    """Attach each row's club colour on the way out.
+
+    Applied at serve time rather than stored on the row, because these rows
+    live in long-lived pool caches — baking the colour in would leave every
+    cached pool serving whatever the palette looked like when it was built.
+    """
+    for row in rows:
+        team_id = row.get("team_id")
+        if team_id:
+            row["team_color"] = teams.readable_color(*teams.team_colors(team_id))
+    return rows
+
+
+def _with_colors(meta: dict) -> dict:
+    """Resolve match colours from team ids at read time.
+
+    Colours used to be frozen into the cache when a match was first opened, so
+    every entry written before a palette change kept serving the old pair —
+    PSG stayed Arsenal red in every cached match. Deriving them here means the
+    registry is the single source of truth and old entries correct themselves.
+    Entries predating the stored ids keep whatever colours they were given.
+    """
+    home_id, away_id = meta.get("home_id"), meta.get("away_id")
+    if home_id and away_id:
+        meta = dict(meta)
+        meta["home_color"], meta["away_color"] = teams.distinct_colors(home_id, away_id)
+    return meta
+
+
 @app.get("/api/match/{fixture_id}/meta")
 def match_meta(fixture_id: int):
     """Scoreline and colours for a match, without generating anything.
@@ -723,13 +775,13 @@ def match_meta(fixture_id: int):
     """
     cached = summary_cache.get(f"meta-{fixture_id}")
     if cached is not None:
-        return cached
+        return _with_colors(cached)
     try:
         context = api_service.build_match_context(fixture_id)
     except api_service.FootballAPIError as exc:
         raise _api_error(exc) from exc
     _store_match_meta(context, fixture_id)
-    return summary_cache.get(f"meta-{fixture_id}") or {}
+    return _with_colors(summary_cache.get(f"meta-{fixture_id}") or {})
 
 
 @app.get("/api/match/{fixture_id}/narrative")
@@ -923,7 +975,7 @@ def get_leaderboard(
         "metric": metric,
         "metrics": leaderboard.metric_options(),
         "pool_size": len(pool),
-        "leaders": leaderboard.rank(pool, metric, limit),
+        "leaders": _with_club_colors(leaderboard.rank(pool, metric, limit)),
     }
 
 
@@ -1030,7 +1082,7 @@ def fpl_differentials(
             "match_rate": joined["match_rate"],
         },
         "count": len(picks),
-        "differentials": picks,
+        "differentials": _with_club_colors(picks),
     }
 
 

@@ -448,6 +448,8 @@
     }
     .sb-team { position: relative; z-index: 1; min-width: 0; }
     .sb-team.away { text-align: right; }
+    .sb-id { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    .sb-team.away .sb-id { flex-direction: row-reverse; }
     .sb-team .name { font-size: clamp(1rem, 2.6vw, 1.5rem); font-weight: 800; }
     .sb-team .bar { height: 4px; border-radius: 2px; margin-top: 0.5rem; box-shadow: 0 0 14px currentColor; }
     .sb-mid { position: relative; z-index: 1; text-align: center; }
@@ -509,6 +511,31 @@
 
     .team-card { --c: var(--neon); border-top: 3px solid var(--c); }
     .team-card h3 .swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--c); box-shadow: 0 0 12px var(--c); }
+
+    /* Club crests & competition logos.
+       Served from our own origin (/api/crest, /api/competition-logo) rather
+       than hotlinked, so third-party-media blockers can't empty the UI. The
+       club colour sits behind the badge: if a crest is missing the chip still
+       reads as that team instead of leaving a hole in the row. */
+    .crest {
+      width: var(--crest, 24px); height: var(--crest, 24px); flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--c, var(--text-dim)) 20%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c, var(--text-dim)) 42%, transparent);
+    }
+    .crest img { width: 82%; height: 82%; object-fit: contain; display: block; }
+    .crest.lg { --crest: 40px; border-radius: 10px; }
+    .crest.sm { --crest: 19px; border-radius: 5px; }
+
+    .comp-logo {
+      width: 20px; height: 20px; object-fit: contain; flex-shrink: 0;
+      vertical-align: -0.3em;
+      /* Federation marks are dark-on-transparent as often as not; a soft plate
+         keeps them legible on the near-black surface without recolouring. */
+      background: rgba(255, 255, 255, 0.9); border-radius: 4px; padding: 1px;
+    }
+    .comp-logo.lg { width: 26px; height: 26px; border-radius: 5px; }
 
     /* Stat bars */
     .stat-row { margin-top: 0.8rem; }
@@ -758,7 +785,11 @@
     .lb-id { min-width: 0; cursor: pointer; }
     .lb-name { font-weight: 700; font-size: 0.92rem; white-space: nowrap;
                overflow: hidden; text-overflow: ellipsis; }
-    .lb-sub { font-size: 0.72rem; color: var(--text-dim); margin-top: 0.12rem; }
+    .lb-sub {
+      font-size: 0.72rem; color: var(--text-dim); margin-top: 0.12rem;
+      display: flex; align-items: center; gap: 0.4rem; min-width: 0;
+    }
+    .lb-sub span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lb-value {
       font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums;
       min-width: 62px; text-align: right;
@@ -821,6 +852,11 @@
     }
     .cmp-head .face img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .cmp-head .nm { font-weight: 800; font-size: 0.98rem; line-height: 1.2; }
+    .cmp-head .sb.club {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0.35rem; min-width: 0;
+    }
+    .cmp-head .sb.club span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cmp-head .sb { font-size: 0.72rem; color: var(--text-dim); margin-top: 0.2rem; }
     .cmp-vs {
       font-size: 0.72rem; font-weight: 800; letter-spacing: 0.16em; color: var(--neon);
@@ -1414,6 +1450,29 @@
       return d.innerHTML;
     }
 
+    /* A club crest, falling back to the team's colour chip.
+       Never `loading="lazy"`: these render inside tab panels that start
+       display:none, and a lazy image in a hidden panel is never fetched at
+       all — that is what left the player headshots blank. */
+    function crest(team, cls = "") {
+      const color = esc(team?.color || "#7c869c");
+      const id = team?.id;
+      const img = id
+        ? `<img src="/api/crest/${encodeURIComponent(id)}" alt="" loading="eager"
+             onerror="this.remove()">`
+        : "";
+      return `<span class="crest ${cls}" style="--c:${color}">${img}</span>`;
+    }
+
+    /* Competition logo. Omitted entirely when we have no id, so a caption
+       never renders a broken-image glyph next to the competition name. */
+    function compLogo(competitionId, cls = "") {
+      if (!competitionId) return "";
+      return `<img class="comp-logo ${cls}" alt="" loading="eager"
+                src="/api/competition-logo/${encodeURIComponent(competitionId)}"
+                onerror="this.remove()">`;
+    }
+
     function setAmbient(match) {
       const root = document.documentElement.style;
       if (!match) {
@@ -1436,17 +1495,17 @@
       return `
         <button class="match-card" style="--c-home:${esc(m.home.color)};--c-away:${esc(m.away.color)}" data-fixture="${m.fixture_id}">
           <div class="mc-top">
-            <span class="mc-comp">${esc(m.competition)}</span>
+            <span class="mc-comp">${compLogo(m.competition_id)} ${esc(m.competition)}</span>
             ${m.badge ? `<span class="mc-badge">${esc(m.badge)}</span>` : ""}
           </div>
           <div class="mc-score">
             <div class="mc-team">
-              <span class="dot" style="color:${esc(m.home.color)};background:${esc(m.home.color)}"></span>
+              ${crest(m.home)}
               <span class="name">${esc(m.home.name)}</span>
             </div>
             <div class="mc-nums">${m.home.score}<span>–</span>${m.away.score}</div>
             <div class="mc-team away">
-              <span class="dot" style="color:${esc(m.away.color)};background:${esc(m.away.color)}"></span>
+              ${crest(m.away)}
               <span class="name">${esc(m.away.name)}</span>
             </div>
           </div>
@@ -1585,18 +1644,18 @@
           return `
             <div class="match-card upcoming" style="--c-home:${esc(m.home.color)};--c-away:${esc(m.away.color)}">
               <div class="mc-top">
-                <span class="mc-comp">${esc(data.competition.name)}</span>
+                <span class="mc-comp">${compLogo(data.competition.id)} ${esc(data.competition.name)}</span>
                 <span class="mc-badge" style="background:rgba(240,196,55,.14);color:var(--premium);
                       border-color:rgba(240,196,55,.35)">📅 ${esc(label)}</span>
               </div>
               <div class="mc-score">
                 <div class="mc-team">
-                  <span class="dot" style="color:${esc(m.home.color)};background:${esc(m.home.color)}"></span>
+                  ${crest(m.home)}
                   <span class="name">${esc(m.home.name)}</span>
                 </div>
                 <div class="mc-nums" style="font-size:0.9rem;color:var(--text-dim)">v</div>
                 <div class="mc-team away">
-                  <span class="dot" style="color:${esc(m.away.color)};background:${esc(m.away.color)}"></span>
+                  ${crest(m.away)}
                   <span class="name">${esc(m.away.name)}</span>
                 </div>
               </div>
@@ -1643,8 +1702,7 @@
         html += `
           <button class="drop-item" data-t1="${team1.id}" data-t2="${team2.id}"
                   data-label="${esc(team1.name)} vs ${esc(team2.name)}">
-            <span class="team-dot" style="color:${esc(team1.color)};background:${esc(team1.color)}"></span>
-            <span class="team-dot" style="color:${esc(team2.color)};background:${esc(team2.color)}"></span>
+            ${crest(team1, "sm")}${crest(team2, "sm")}
             <strong>${esc(team1.name)}</strong><span class="vs-pill">VS</span><strong>${esc(team2.name)}</strong>
             <span class="sub">head-to-head →</span>
           </button>`;
@@ -1652,7 +1710,7 @@
       for (const t of data.teams || []) {
         html += `
           <button class="drop-item" data-t1="${t.id}" data-label="${esc(t.name)}">
-            <span class="team-dot" style="color:${esc(t.color)};background:${esc(t.color)}"></span>
+            ${crest(t, "sm")}
             <strong>${esc(t.name)}</strong>
             <span class="sub">${t.generated ? "discovered" : "recent matches"} →</span>
           </button>`;
@@ -1776,15 +1834,15 @@
       $("scoreboard").style.setProperty("--c-away", m.away.color);
       $("scoreboard").innerHTML = `
         <div class="sb-team">
-          <div class="name">${esc(m.home.name)}</div>
+          <div class="sb-id">${crest(m.home, "lg")}<div class="name">${esc(m.home.name)}</div></div>
           <div class="bar" style="background:${esc(m.home.color)};color:${esc(m.home.color)}"></div>
         </div>
         <div class="sb-mid">
           <div class="score">${m.home.score} – ${m.away.score}</div>
-          <div class="comp">${esc(m.competition)} · ${esc(m.date)}</div>
+          <div class="comp">${compLogo(m.competition_id)} ${esc(m.competition)} · ${esc(m.date)}</div>
         </div>
         <div class="sb-team away">
-          <div class="name">${esc(m.away.name)}</div>
+          <div class="sb-id">${crest(m.away, "lg")}<div class="name">${esc(m.away.name)}</div></div>
           <div class="bar" style="background:${esc(m.away.color)};color:${esc(m.away.color)}"></div>
         </div>`;
     }
@@ -2233,8 +2291,11 @@
           fixture_id: fixtureId,
           date: meta.date,
           competition: meta.competition,
-          home: { name: meta.home, score: meta.home_score, color: meta.home_color, short: "" },
-          away: { name: meta.away, score: meta.away_score, color: meta.away_color, short: "" },
+          competition_id: meta.competition_id,
+          home: { id: meta.home_id, name: meta.home, score: meta.home_score,
+                  color: meta.home_color, short: "" },
+          away: { id: meta.away_id, name: meta.away, score: meta.away_score,
+                  color: meta.away_color, short: "" },
         });
       } catch {
         showView("home", false);
@@ -2276,8 +2337,9 @@
     }
 
     function renderLeaderboard(data) {
-      $("lb-context").textContent =
-        `${data.competition.name} ${seasonLabel(data.season)} — ranked across ${data.pool_size} players`;
+      $("lb-context").innerHTML =
+        `${compLogo(data.competition.id, "lg")} ${esc(data.competition.name)} ` +
+        `${esc(seasonLabel(data.season))} — ranked across ${data.pool_size} players`;
 
       $("lb-metrics").innerHTML = data.metrics.map((m) =>
         `<button class="nav-link ${m.key === data.metric ? "active" : ""}" data-metric="${m.key}">${esc(m.label)}</button>`
@@ -2289,7 +2351,7 @@
       // Only competitions with a player pool worth ranking.
       const leagues = competitions.filter((c) => c.kind === "domestic_league");
       $("lb-leagues").innerHTML = leagues.map((c) =>
-        `<button class="nav-link ${c.id === data.competition.id ? "active" : ""}" data-league="${c.id}">${esc(c.emoji)} ${esc(c.name)}</button>`
+        `<button class="nav-link ${c.id === data.competition.id ? "active" : ""}" data-league="${c.id}">${compLogo(c.id)} ${esc(c.name)}</button>`
       ).join("");
       $("lb-leagues").querySelectorAll("[data-league]").forEach((b) =>
         b.addEventListener("click", () => openLeaderboard({ league: +b.dataset.league, season: null }))
@@ -2305,7 +2367,10 @@
           </div>
           <div class="lb-id" data-player="${p.id}">
             <div class="lb-name">${esc(p.name)}</div>
-            <div class="lb-sub">${esc(p.team || "")} · ${esc(p.position || "")} · ${p.appearances} apps</div>
+            <div class="lb-sub">
+              ${crest({ id: p.team_id, color: p.team_color }, "sm")}
+              <span>${esc(p.team || "")} · ${esc(p.position || "")} · ${p.appearances} apps</span>
+            </div>
           </div>
           <div class="lb-value">${esc(String(p.metric_value))}</div>
           <button class="lb-compare ${cmpHas(p.id) ? "picked" : ""}"
@@ -2376,8 +2441,11 @@
             </div>
             <div class="lb-id" data-player="${r.id}">
               <div class="lb-name">${esc(r.name)}</div>
-              <div class="lb-sub">${esc(r.fpl_team || r.team || "")} · ${esc(r.position || "")} ·
-                ${(p.goals ?? 0)}G/90 · ${(p.assists ?? 0)}A/90 · ${(p.key_passes ?? 0)}KP/90</div>
+              <div class="lb-sub">
+                ${crest({ id: r.team_id, color: r.team_color }, "sm")}
+                <span>${esc(r.fpl_team || r.team || "")} · ${esc(r.position || "")} ·
+                  ${(p.goals ?? 0)}G/90 · ${(p.assists ?? 0)}A/90 · ${(p.key_passes ?? 0)}KP/90</span>
+              </div>
             </div>
             <div class="lb-value" style="min-width:56px">£${r.price}</div>
             <div class="lb-value" style="min-width:56px;color:var(--neon)">${r.ownership}%</div>
@@ -2484,7 +2552,10 @@
         <div class="cmp-head" style="--c:${color}">
           <div class="face">${d.player.photo ? `<img src="${esc(d.player.photo)}" alt="" onerror="this.remove()">` : ""}</div>
           <div class="nm">${esc(d.player.name || "")}</div>
-          <div class="sb">${esc(d.player.team || "")} · ${esc(d.player.position || "")}</div>
+          <div class="sb club">
+            ${crest({ id: d.player.team_id, color: d.player.team_color }, "sm")}
+            <span>${esc(d.player.team || "")} · ${esc(d.player.position || "")}</span>
+          </div>
           <div class="sb">${d.totals.appearances ?? 0} apps · ${seasonLabel(d.season)}</div>
         </div>`;
 

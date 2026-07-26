@@ -40,6 +40,14 @@ _SUM_FIELDS: list[tuple[str, str, str]] = [
 ]
 
 
+def _team_color(team_id: Optional[int]) -> Optional[str]:
+    """The club's accent colour, via the same rules the match views use."""
+    if not team_id:
+        return None
+    from services import teams
+    return teams.readable_color(*teams.team_colors(team_id))
+
+
 def _num(value: Any) -> Optional[float]:
     if value is None or isinstance(value, bool):
         return None
@@ -97,7 +105,7 @@ def build_profile(raw: dict[str, Any], season: int) -> dict[str, Any]:
         {
             "name": (b.get("league") or {}).get("name"),
             "country": (b.get("league") or {}).get("country"),
-            "logo": (b.get("league") or {}).get("logo"),
+            "id": (b.get("league") or {}).get("id"),
             "appearances": _int(_num((b.get("games") or {}).get("appearences"))),
             "minutes": _int(_num((b.get("games") or {}).get("minutes"))),
             "rating": (lambda r: round(r, 2) if r is not None else None)(
@@ -125,7 +133,10 @@ def build_profile(raw: dict[str, Any], season: int) -> dict[str, Any]:
             "photo": f"/api/player-photo/{info.get('id')}" if info.get("id") else None,
             "position": position,
             "team": team.get("name"),
-            "team_logo": team.get("logo"),
+            # The id rather than the provider URL: the client builds a
+            # same-origin crest path from it, as it does everywhere else.
+            "team_id": team.get("id"),
+            "team_color": _team_color(team.get("id")),
         },
         "season": season,
         "average_rating": average_rating,

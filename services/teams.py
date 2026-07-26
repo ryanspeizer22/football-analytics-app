@@ -124,8 +124,12 @@ def _lighten(hex_color: str, amount: float) -> str:
     return f"#{r:02X}{g:02X}{b:02X}"
 
 
-# Below this brightness a color disappears against the dark UI background.
-_MIN_LUMINANCE = 60.0
+# Visibility on the dark UI is decided by the brightest channel ("value"), not
+# by perceived luminance. Luminance weights blue at 0.114, so a vivid #0033FF
+# scores 29 and would be ruled invisible when it plainly is not — which is how
+# every dark blue kit ended up being replaced or washed out.
+_MIN_VALUE = 120        # below this a color genuinely disappears on near-black
+_ACCENT_VALUE = 190     # what a lifted accent is raised to
 # Below this channel spread a color reads as neutral gray/white rather than
 # as a team's identity — flat and washed out in a chart fill.
 _MIN_CHROMA = 26
@@ -151,19 +155,56 @@ def _tint_neutral(hex_color: str) -> str:
     return f"#{r:02X}{g:02X}{b:02X}"
 
 
+def _value(hex_color: str) -> int:
+    """Brightest channel — how visible the color is against near-black."""
+    return max(_hex_to_rgb(hex_color))
+
+
+def _lift_to(hex_color: str, target: int = _ACCENT_VALUE) -> str:
+    """Brighten a color to the target value without moving its hue.
+
+    Scaling every channel by the same factor holds the ratios between them,
+    which is the hue. Blending toward white instead — what _lighten does —
+    pulls every dark blue toward the same pale wash, so Chelsea, Everton and
+    Spurs stop being distinguishable from each other. Keying the scale off the
+    brightest channel means nothing clips, so the hue survives exactly.
+    """
+    value = _value(hex_color)
+    if value >= target:
+        return hex_color
+    if value <= 0:
+        return _lighten(hex_color, 0.62)      # pure black has no hue to scale
+    scale = target / value
+    return "#" + "".join(f"{min(255, round(c * scale)):02X}"
+                         for c in _hex_to_rgb(hex_color))
+
+
 def readable_color(hex_color: str, fallback: str) -> str:
     """Ensure an accent color is visible, and reads as a color, on dark.
 
-    Near-black kits (Newcastle, Juventus) would otherwise render as an
-    invisible swatch — prefer the club's secondary color, else lighten —
-    and pure monochrome results get a faint tint so they aren't mistaken
-    for an empty chart region.
+    A club's hue is its identity; its brightness is negotiable. So a dark but
+    vivid kit — PSG navy, Spurs navy — is lifted with its hue intact rather
+    than swapped for the club's secondary. Preferring the secondary is what
+    rendered PSG in Arsenal's red, and what collapsed Chelsea, Everton and
+    Spurs onto one identical pale blue, all three having white as their second
+    color. Most kits now need no adjustment at all and render at their exact
+    brand hex.
+
+    Only a genuinely achromatic primary falls back to the secondary: brightening
+    Juventus black or Newcastle's near-black yields gray, which carries no
+    identity, so the second color is the better signal — and for Fulham that
+    correctly surfaces their red trim rather than another gray.
     """
-    if _luminance(hex_color) >= _MIN_LUMINANCE:
+    if _chroma(hex_color) >= _MIN_CHROMA:
+        if _value(hex_color) >= _MIN_VALUE:
+            return hex_color                  # a real hue, bright enough as-is
+        return _lift_to(hex_color)
+    # Achromatic primary: the secondary may still carry the club's color.
+    if _chroma(fallback) >= _MIN_CHROMA and _value(fallback) >= _MIN_VALUE:
+        return fallback
+    if _value(hex_color) >= _MIN_VALUE:
         return _tint_neutral(hex_color)
-    if _luminance(fallback) >= _MIN_LUMINANCE:
-        return _tint_neutral(fallback)
-    return _tint_neutral(_lighten(hex_color, 0.55))
+    return _tint_neutral(_lighten(hex_color, 0.62))
 
 
 def distinct_colors(home_id: int, away_id: int) -> tuple[str, str]:
