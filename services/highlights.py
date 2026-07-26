@@ -222,6 +222,26 @@ def clips_for(fixture_id: int, resolved: Optional[dict[str, Any]] = None) -> dic
         entry = {**entry,
                  "youtube_channel": resolved.get("channel"),
                  "youtube_title": resolved.get("title")}
+
+    # Every id worth trying, best first. Rights are territorial, so the primary
+    # is often unplayable for a given viewer — the client walks this list on a
+    # playback refusal rather than dropping straight to the search link.
+    alternates = [
+        {"id": alt} if isinstance(alt, str) else alt
+        for alt in (entry.get("youtube_alternates") or [])
+    ]
+    if resolved and resolved.get("others"):
+        alternates += resolved["others"]
+    seen, candidates = set(), []
+    for cand in ([{"id": youtube_id,
+                   "channel": entry.get("youtube_channel"),
+                   "title": entry.get("youtube_title")}] if youtube_id else []) + alternates:
+        cid = cand.get("id")
+        if cid and cid not in seen:
+            seen.add(cid)
+            candidates.append({"id": cid, "channel": cand.get("channel"),
+                               "title": cand.get("title"),
+                               "thumb": f"/api/youtube-thumb/{cid}"})
     youtube = None
     if youtube_id:
         youtube = {
@@ -240,6 +260,7 @@ def clips_for(fixture_id: int, resolved: Optional[dict[str, Any]] = None) -> dic
             "thumb": f"/api/youtube-thumb/{youtube_id}",
             "channel": entry.get("youtube_channel"),
             "title": entry.get("youtube_title"),
+            "candidates": candidates,
         }
     return {
         "clips": clips,
@@ -279,12 +300,13 @@ def auto_map(context: dict[str, Any], fixture_id: int) -> Optional[dict[str, Any
     fixture = context.get("fixture") or {}
     teams = fixture.get("teams") or {}
     home, away = teams.get("home") or {}, teams.get("away") or {}
-    found = youtube.resolve(
+    shortlist = youtube.resolve_all(
         home.get("name") or "", away.get("name") or "",
         (fixture.get("fixture") or {}).get("date") or "",
         (fixture.get("league") or {}).get("name") or "",
         home_id=home.get("id"), away_id=away.get("id"),
     )
+    found = dict(shortlist[0], others=shortlist[1:]) if shortlist else None
     summary_cache.set(cache_key, found or {})
     return found
 

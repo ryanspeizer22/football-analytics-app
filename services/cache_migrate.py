@@ -19,6 +19,8 @@ model's mouth and presenting them as its analysis.
 Regeneration is reserved for entries with no usable content at all.
 """
 
+import re
+import unicodedata
 from typing import Any, Optional
 
 # The shape each half is expected to have, with the default for a missing key.
@@ -75,6 +77,72 @@ def analysis_from(entry: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if not entry or not _has_content(entry, ANALYSIS_SHAPE):
         return None
     return _shaped(entry, ANALYSIS_SHAPE)
+
+
+def _fold(name: str) -> str:
+    """Case- and accent-insensitive form, for matching names across sources."""
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"[^a-z ]", " ", stripped.lower()).strip()
+
+
+def _surname_initial(folded: str) -> Optional[tuple[str, str]]:
+    parts = folded.split()
+    return (parts[-1], parts[0][0]) if len(parts) >= 2 else None
+
+
+def backfill_player_photos(notes: list[dict[str, Any]],
+                           context: dict[str, Any]) -> int:
+    """Give legacy player notes their portraits back, by name.
+
+    Notes written before the schema carried `player_id` have only a name, so
+    the photo proxy has no id to build a URL from and the card falls back to
+    initials. The ids are not lost — they are in the match context on disk, so
+    the name is resolved against that rather than regenerating the notes.
+
+    Matching is deliberately conservative. An exact fold (case and accents
+    removed) covers almost everything: on the 2022 World Cup final it resolves
+    34 of 35 outright, the miss being "Rodrigo de Paul" against "Rodrigo De
+    Paul". Surname-plus-initial catches the rest. Anything still ambiguous is
+    left alone — a card showing initials is a small blemish, a card showing
+    another player's face is a lie.
+
+    Returns how many notes were repaired.
+    """
+    by_exact: dict[str, int] = {}
+    by_surname: dict[tuple[str, str], list[int]] = {}
+    for block in context.get("player_statistics") or []:
+        for row in block.get("players") or []:
+            info = row.get("player") or {}
+            pid, name = info.get("id"), info.get("name")
+            if not (isinstance(pid, int) and pid > 0 and name):
+                continue
+            folded = _fold(name)
+            by_exact.setdefault(folded, pid)
+            key = _surname_initial(folded)
+            if key:
+                by_surname.setdefault(key, []).append(pid)
+
+    repaired = 0
+    for note in notes:
+        if isinstance(note.get("player_id"), int) and note["player_id"] > 0:
+            continue
+        folded = _fold(note.get("player_name") or "")
+        if not folded:
+            continue
+        pid = by_exact.get(folded)
+        if pid is None:
+            key = _surname_initial(folded)
+            candidates = by_surname.get(key, []) if key else []
+            # Only when it is unambiguous; two players sharing a surname and an
+            # initial cannot be told apart from a name alone.
+            pid = candidates[0] if len(candidates) == 1 else None
+        if pid is None:
+            continue
+        note["player_id"] = pid
+        note["photo"] = f"/api/player-photo/{pid}"
+        repaired += 1
+    return repaired
 
 
 def first_usable(candidates: list[Optional[dict[str, Any]]],

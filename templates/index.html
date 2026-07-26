@@ -2438,20 +2438,64 @@
               </a>`;
     }
 
-    async function mountYouTube(box, videoId, searchUrl) {
+    /* YouTube IFrame API error codes, and what each is worth doing about:
+         2   malformed id           — permanent for this video
+         5   HTML5 player failure   — often transient, worth one more attempt
+         100 removed or private     — permanent for this video
+         101 embedding disallowed   — permanent for this video
+         150 same as 101, and what a territorial block reports as
+       Only code 5 is retried in place. The rest mean this particular upload
+       will never play here, so the next candidate is tried instead — rights
+       are sold by territory, so an NBC video refusing in the UK says nothing
+       about the Sky one ranked behind it. */
+    const YT_RETRYABLE = new Set([5]);
+
+    async function mountYouTube(box, candidates, searchUrl) {
+      const queue = (candidates || []).filter((c) => c && c.id);
+      if (!queue.length) { box.outerHTML = highlightsFallback(searchUrl); return; }
+
       const host = document.createElement("div");
-      box.querySelector(".hl-yt-face").replaceWith(host);
+      const face = box.querySelector(".hl-yt-face");
+      if (face) face.replaceWith(host); else box.innerHTML = "";
       const YT = await youtubeApi();
-      new YT.Player(host, {
-        videoId,
-        playerVars: { rel: 0, modestbranding: 1, autoplay: 1, playsinline: 1 },
-        events: {
-          // 2 bad id · 5 html5 · 100 removed · 101/150 embedding or territory refused
-          onError: () => {
-            box.outerHTML = highlightsFallback(searchUrl);
-          },
-        },
-      });
+
+      let index = 0, retried = false, player = null;
+
+      const credit = (c) => {
+        const el = box.querySelector(".hl-credit");
+        if (el) el.innerHTML =
+          `${esc(c.title || "Match highlights")}${c.channel ? ` · <strong>${esc(c.channel)}</strong> on YouTube` : ""}`;
+      };
+
+      const play = () => {
+        const c = queue[index];
+        credit(c);
+        if (player) { player.loadVideoById(c.id); return; }
+        player = new YT.Player(host, {
+          videoId: c.id,
+          playerVars: { rel: 0, modestbranding: 1, autoplay: 1, playsinline: 1 },
+          events: { onError: (e) => onError(e.data) },
+        });
+      };
+
+      const onError = (code) => {
+        if (YT_RETRYABLE.has(code) && !retried) {
+          retried = true;                       // one more go at the same video
+          setTimeout(play, 600);
+          return;
+        }
+        retried = false;
+        index += 1;
+        if (index < queue.length) {
+          console.info(`highlights: candidate ${index} failed (code ${code}); trying next`);
+          play();
+          return;
+        }
+        // Genuinely out of options — every candidate refused to play here.
+        box.outerHTML = highlightsFallback(searchUrl);
+      };
+
+      play();
     }
 
     async function loadHighlights(match, load) {
@@ -2587,7 +2631,8 @@
       const ytBox = $("hl-yt");
       if (ytBox) {
         ytBox.querySelector(".hl-yt-face").addEventListener("click", () => {
-          mountYouTube(ytBox, data.youtube.id, data.search_url);
+          mountYouTube(ytBox, data.youtube.candidates || [{ id: data.youtube.id,
+            channel: data.youtube.channel, title: data.youtube.title }], data.search_url);
         }, { once: true });
       }
 

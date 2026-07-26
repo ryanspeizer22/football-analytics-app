@@ -212,22 +212,25 @@ def _score(item: dict[str, Any], home_forms: set[str], away_forms: set[str],
     }
 
 
-def resolve(home: str, away: str, kickoff_iso: str, competition: str = "",
-            home_id: Optional[int] = None,
-            away_id: Optional[int] = None) -> Optional[dict[str, Any]]:
-    """Best official highlights video for a fixture, or None.
+def resolve_all(home: str, away: str, kickoff_iso: str, competition: str = "",
+                home_id: Optional[int] = None, away_id: Optional[int] = None,
+                limit: int = 4) -> list[dict[str, Any]]:
+    """Every candidate that clears the bar, best first.
 
-    None is a normal outcome, not a failure: most matches have no official
-    upload that clears the bar, and returning nothing is correct there.
+    More than one is returned on purpose. Highlight rights are territorial —
+    NBC's upload plays in the US and refuses everywhere else, Sky's the reverse
+    — so the best-ranked candidate is frequently unplayable for a given viewer.
+    Handing the client the whole shortlist lets it try the next one instead of
+    giving up on the first refusal.
     """
     key = api_key()
     if not key:
-        return None
+        return []
     try:
         kickoff = datetime.fromisoformat((kickoff_iso or "").replace("Z", "+00:00"))
     except ValueError:
         logger.info("Unparseable kickoff %r; skipping video lookup", kickoff_iso)
-        return None
+        return []
 
     query = f"{home} vs {away} highlights {competition} {kickoff.year}".strip()
     try:
@@ -241,7 +244,7 @@ def resolve(home: str, away: str, kickoff_iso: str, competition: str = "",
         resp.raise_for_status()
     except requests.RequestException as exc:
         logger.warning("YouTube search failed for %s v %s: %s", home, away, exc)
-        return None
+        return []
 
     home_forms = _identifiers(home, home_id)
     away_forms = _identifiers(away, away_id)
@@ -253,9 +256,18 @@ def resolve(home: str, away: str, kickoff_iso: str, competition: str = "",
 
     if not scored:
         logger.info("No official highlights cleared the bar for %s v %s", home, away)
-        return None
+        return []
     scored.sort(key=lambda s: s[0], reverse=True)
-    best = scored[0][1]
-    logger.info("Resolved highlights for %s v %s: %s (%s)",
-                home, away, best["id"], best["channel"])
-    return best
+    found = [entry for _, entry in scored[:limit]]
+    logger.info("Resolved %d highlight candidate(s) for %s v %s: %s",
+                len(found), home, away,
+                ", ".join(f"{f['id']} ({f['channel']})" for f in found))
+    return found
+
+
+def resolve(home: str, away: str, kickoff_iso: str, competition: str = "",
+            home_id: Optional[int] = None,
+            away_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    """Best official highlights video for a fixture, or None."""
+    found = resolve_all(home, away, kickoff_iso, competition, home_id, away_id)
+    return found[0] if found else None

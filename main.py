@@ -403,6 +403,30 @@ def _fixture_card(f: dict) -> dict:
     }
 
 
+def _with_faces(payload: dict, fixture_id: int) -> dict:
+    """Restore portraits on player notes written before ids were stored.
+
+    The oldest notes carry only a name, so there is no id for the photo proxy
+    to address and every card falls back to initials. The ids are still in the
+    match context on disk, so the names are resolved against it and the repaired
+    payload is written back — the lookup then happens once, not per request.
+    """
+    notes = payload.get("player_notes") or []
+    if not notes or all(isinstance(n.get("player_id"), int) for n in notes):
+        return payload
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except Exception:
+        logger.info("Context unavailable for %s; player cards keep initials", fixture_id)
+        return payload
+
+    repaired = cache_migrate.backfill_player_photos(notes, context)
+    if repaired:
+        logger.info("Restored %d player portraits for fixture %s", repaired, fixture_id)
+        summary_cache.set(f"players-{fixture_id}", payload)
+    return payload
+
+
 def _use_photo_proxy(summary: dict) -> dict:
     """Point player photos at the same-origin proxy.
 
@@ -1057,7 +1081,7 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return _use_photo_proxy(textclean.clean(cached))
+            return _use_photo_proxy(_with_faces(textclean.clean(cached), fixture_id))
 
     try:
         context = api_service.build_match_context(fixture_id)
