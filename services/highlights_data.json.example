@@ -1,16 +1,26 @@
 {
   "_comment": [
-    "Licensed video for the Highlights panel, keyed by fixture id.",
-    "Nothing here ships with the app: match footage belongs to whoever filmed",
-    "it. Add only sources you hold the rights to, or that you self-host.",
+    "Licensed media for the Highlights panel, keyed by fixture id.",
+    "Nothing here ships with the app. Match footage and action photography",
+    "belong to the broadcasters and agencies who produced them — add only",
+    "sources you hold the rights to, or that you self-host.",
     "Copy this file to highlights_data.json to activate it.",
+    "",
+    "clips  : video sources for the in-page player.",
+    "images : action photograph per moment, keyed by moment id (m0, m1, ...)",
+    "         or by minute. Overrides the player portrait for that moment.",
     "clip_start on a moment (seconds) makes that row seek the player."
   ],
   "979139": {
     "poster": "/static/your-poster.jpg",
     "credit": "Clip licensed from <rights holder>",
+    "image_credit": "Photographs © <agency>, used under licence",
     "clips": [
       { "src": "/static/clips/your-clip.mp4", "type": "video/mp4" }
-    ]
+    ],
+    "images": {
+      "m0": "/static/shots/messi-penalty-23.jpg",
+      "108": "/static/shots/messi-108.jpg"
+    }
   }
 }

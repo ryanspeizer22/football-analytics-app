@@ -20,7 +20,7 @@ things are worth knowing before adding to this list:
 
 from typing import Any
 
-from services.teams import display_name, distinct_colors
+from services.teams import display_name, distinct_colors, get_team
 
 
 def _card(
@@ -55,6 +55,10 @@ def _card(
             "id": home_id,
             "name": display_name(home_id, home_name),
             "full_name": home_name,
+            # Feeds the chart's axis labels. Without it they fall back to the
+            # words HOME and AWAY, which at a neutral venue asserts something
+            # the fixture doesn't mean — the designation there is a coin toss.
+            "short": (get_team(home_id) or {}).get("short", ""),
             "score": home_score,
             "color": home_color,
         },
@@ -62,6 +66,7 @@ def _card(
             "id": away_id,
             "name": display_name(away_id, away_name),
             "full_name": away_name,
+            "short": (get_team(away_id) or {}).get("short", ""),
             "score": away_score,
             "color": away_color,
         },

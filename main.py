@@ -82,7 +82,8 @@ PHOTO_CDN = "https://media.api-sports.io/football/players/{player_id}.png"
 # The CDN addresses every asset by id under a per-kind path, so a crest or a
 # competition logo needs no stored URL — only the id we already have.
 _MEDIA_CDN = "https://media.api-sports.io/football/{kind}/{asset_id}.png"
-_MEDIA_KINDS = {"players": "photos", "teams": "crests", "leagues": "competitions"}
+_MEDIA_KINDS = {"players": "photos", "teams": "crests",
+                "leagues": "competitions", "venues": "venues"}
 
 
 def _client_id(request: Request) -> str:
@@ -578,7 +579,10 @@ def _serve_media(kind: str, asset_id: int, label: str) -> Response:
     cache_dir = PHOTO_CACHE_DIR.parent / _MEDIA_KINDS[kind]
     cached = cache_dir / f"{asset_id}.png"
     if cached.exists():
-        return Response(cached.read_bytes(), media_type="image/png",
+        # Sniffed, not assumed: venue art is JPEG served from a .png path, and
+        # labelling it image/png left the browser to guess.
+        kind_hint = "image/jpeg" if cached.read_bytes()[:2] == b"\xff\xd8" else "image/png"
+        return Response(cached.read_bytes(), media_type=kind_hint,
                         headers=_MEDIA_HEADERS)
 
     try:
@@ -593,7 +597,8 @@ def _serve_media(kind: str, asset_id: int, label: str) -> Response:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     cached.write_bytes(resp.content)
-    return Response(resp.content, media_type="image/png", headers=_MEDIA_HEADERS)
+    return Response(resp.content, headers=_MEDIA_HEADERS,
+                    media_type=resp.headers.get("content-type", "image/png"))
 
 
 @app.get("/api/player-photo/{player_id}")
@@ -613,6 +618,12 @@ def team_crest(team_id: int):
 # as a normal 200 with a valid PNG, so only the content identifies it.
 _PLACEHOLDER_LOGO_MD5 = "3617b8094f9ea8c81f6d0beff671978b"
 _TROPHY_EMBLEM = Path("static/trophy-emblem.svg")
+
+
+@app.get("/api/venue-photo/{venue_id}")
+def venue_photo(venue_id: int):
+    """Photograph of the stadium. Real photography, from the provider's CDN."""
+    return _serve_media("venues", venue_id, "Venue")
 
 
 @app.get("/api/competition-logo/{league_id}")
@@ -740,6 +751,8 @@ def _store_match_meta(context: dict, fixture_id: int) -> None:
             # palette change reaches old entries without a cache flush.
             "home_id": home["id"],
             "away_id": away["id"],
+            "home_short": (teams.get_team(home["id"]) or {}).get("short", ""),
+            "away_short": (teams.get_team(away["id"]) or {}).get("short", ""),
             "home_score": (fx.get("goals") or {}).get("home"),
             "away_score": (fx.get("goals") or {}).get("away"),
             "competition": (fx.get("league") or {}).get("name", ""),
@@ -755,6 +768,54 @@ def _store_match_meta(context: dict, fixture_id: int) -> None:
         })
     except Exception:
         logger.exception("Failed to store OG metadata for fixture %s", fixture_id)
+
+
+def _refresh_derived(cached: dict, fixture_id: int) -> dict:
+    """Recompute the derived half of a cached narrative on the way out.
+
+    Momentum and the stat comparisons are pure functions of data we already
+    hold — no model call, no provider call, since the match context is on disk.
+    Serving them from the narrative cache froze them at whatever the engine did
+    when the analysis was first generated: the Euro 2020 final kept reporting a
+    130-minute match with ten phantom goals long after the shootout fix landed.
+    The prose stays cached; only the computed parts are rebuilt.
+    """
+    try:
+        context = api_service.build_match_context(fixture_id)
+    except Exception:
+        logger.info("Context unavailable for %s; serving cached derived data", fixture_id)
+        return cached
+    out = dict(cached)
+    out["team_breakdowns"] = _home_first(out.get("team_breakdowns") or [], context)
+    out.update(_derived(context, fixture_id))
+    return out
+
+
+def _home_first(breakdowns: list[dict], context: dict) -> list[dict]:
+    """Order the team cards home-then-away, from the fixture payload.
+
+    The model returns the two breakdowns in whatever order it wrote them. It
+    has always happened to lead with the home side, but "happens to" is not an
+    ordering: at a neutral venue there is no kick-off-side cue in the data to
+    keep it consistent, so the pairing with the chart's home axis is enforced
+    here rather than left to the prose.
+    """
+    teams_block = (context.get("fixture") or {}).get("teams") or {}
+    home_name = ((teams_block.get("home") or {}).get("name") or "").lower()
+    if not home_name or len(breakdowns) != 2:
+        return breakdowns
+
+    def is_home(entry: dict) -> bool:
+        name = (entry.get("team_name") or "").lower()
+        # Names differ between feed and prose ("Paris Saint Germain" / "PSG"),
+        # so compare on containment in either direction rather than equality.
+        return bool(name) and (name in home_name or home_name in name
+                               or name.split()[0] == home_name.split()[0])
+
+    if is_home(breakdowns[1]) and not is_home(breakdowns[0]):
+        logger.info("Team breakdowns arrived away-first; reordering to home-first")
+        return [breakdowns[1], breakdowns[0]]
+    return breakdowns
 
 
 def _derived(context: dict, fixture_id: int) -> dict:
@@ -841,7 +902,7 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
     if not refresh:
         cached = summary_cache.get(cache_key)
         if cached is not None:
-            return textclean.clean(cached)
+            return _refresh_derived(textclean.clean(cached), fixture_id)
 
     try:
         context = api_service.build_match_context(fixture_id)
@@ -866,6 +927,7 @@ def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     result = textclean.clean(narrative.model_dump())
+    result["team_breakdowns"] = _home_first(result.get("team_breakdowns") or [], context)
     result.update(derived)
 
     status = context["fixture"].get("fixture", {}).get("status", {}).get("short")

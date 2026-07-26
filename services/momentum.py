@@ -112,6 +112,21 @@ def _to_number(raw: Any) -> Optional[float]:
     return float(match.group()) if match else None
 
 
+# The provider tags each shootout kick with this comment. It is the only
+# reliable discriminator: an in-play penalty in the 118th minute and a shootout
+# kick logged at 120+1 are otherwise identical in shape.
+_SHOOTOUT_COMMENT = "penalty shootout"
+
+
+def is_shootout_event(event: dict[str, Any]) -> bool:
+    """Whether an event is a penalty-shootout kick rather than open play.
+
+    Defined here, and imported by `highlights`, so the two modules cannot drift
+    apart on a rule this subtle.
+    """
+    return (event.get("comments") or "").strip().lower() == _SHOOTOUT_COMMENT
+
+
 def _classify(event: dict[str, Any]) -> tuple[str, bool]:
     """Map a raw event to (impulse key, credited_to_event_team).
 
@@ -234,6 +249,12 @@ def build_timeline(
     """
     impulses: list[tuple[int, float]] = []   # (minute, signed magnitude)
     moments: list[dict[str, Any]] = []
+
+    # A shootout is not part of the flow of play, and the provider logs its
+    # kicks as goals at 120+1, +2, +3… Left in, they were driving the curve —
+    # the Euro 2020 final ran to minute 130 with ten phantom "goals" swinging
+    # the index after the football had finished.
+    events = [e for e in events if not is_shootout_event(e)]
 
     for event in events:
         key, _ = _classify(event)

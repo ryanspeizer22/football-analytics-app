@@ -24,14 +24,11 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from services import momentum
+
 logger = logging.getLogger(__name__)
 
 _CLIP_DATA = Path(__file__).resolve().parent / "highlights_data.json"
-
-# The provider tags every shootout kick with this comment. Using it beats any
-# minute-based heuristic: an in-play penalty in the 118th minute and a shootout
-# kick logged at 120+1 are otherwise indistinguishable.
-_SHOOTOUT_COMMENT = "penalty shootout"
 
 # Which events earn a place in the reel, and how prominently.
 _GOAL_KINDS = {
@@ -48,10 +45,6 @@ def _minute_label(time: dict[str, Any]) -> str:
     return f"{elapsed}+{extra}'" if extra else f"{elapsed}'"
 
 
-def _is_shootout(event: dict[str, Any]) -> bool:
-    return (event.get("comments") or "").strip().lower() == _SHOOTOUT_COMMENT
-
-
 def _sort_key(event: dict[str, Any]) -> tuple[int, int]:
     t = event.get("time") or {}
     return (t.get("elapsed") or 0, t.get("extra") or 0)
@@ -66,7 +59,7 @@ def build_moments(context: dict[str, Any]) -> list[dict[str, Any]]:
     moments = []
     running_home = running_away = 0
     for event in sorted(context.get("events") or [], key=_sort_key):
-        if _is_shootout(event):
+        if momentum.is_shootout_event(event):
             continue                      # the shootout is its own block
         etype = (event.get("type") or "").lower()
         detail = (event.get("detail") or "").lower()
@@ -93,6 +86,7 @@ def build_moments(context: dict[str, Any]) -> list[dict[str, Any]]:
         if not kind:
             continue
 
+        player_id = (event.get("player") or {}).get("id")
         moments.append({
             "id": f"m{len(moments)}",
             "minute": (event.get("time") or {}).get("elapsed") or 0,
@@ -100,6 +94,13 @@ def build_moments(context: dict[str, Any]) -> list[dict[str, Any]]:
             "kind": kind,
             "title": title,
             "player": player,
+            # A real photograph of the player who produced the moment. The
+            # provider has no action photography — /fixtures and /photos on its
+            # media CDN are both 404 — so this is the closest real image of the
+            # moment that exists in any source available to us. A licensed
+            # action shot, where one is held, overrides it via `image` below.
+            "player_id": player_id,
+            "photo": f"/api/player-photo/{player_id}" if player_id else None,
             "assist": assist if kind in ("goal", "penalty") else None,
             "team_id": team_id,
             "team": (event.get("team") or {}).get("name"),
@@ -113,7 +114,7 @@ def build_shootout(context: dict[str, Any]) -> Optional[dict[str, Any]]:
     """The penalty shootout as an ordered sequence with a running tally."""
     fixture = context.get("fixture") or {}
     home_id = ((fixture.get("teams") or {}).get("home") or {}).get("id")
-    kicks_raw = [e for e in context.get("events") or [] if _is_shootout(e)]
+    kicks_raw = [e for e in context.get("events") or [] if momentum.is_shootout_event(e)]
     if not kicks_raw:
         return None
 
@@ -127,9 +128,12 @@ def build_shootout(context: dict[str, Any]) -> Optional[dict[str, Any]]:
                 home_score += 1
             else:
                 away_score += 1
+        player_id = (event.get("player") or {}).get("id")
         kicks.append({
             "order": len(kicks) + 1,
             "player": (event.get("player") or {}).get("name"),
+            "player_id": player_id,
+            "photo": f"/api/player-photo/{player_id}" if player_id else None,
             "team": (event.get("team") or {}).get("name"),
             "team_id": (event.get("team") or {}).get("id"),
             "is_home": is_home,
@@ -170,19 +174,57 @@ def clips_for(fixture_id: int) -> dict[str, Any]:
         "poster": entry.get("poster"),
         "credit": entry.get("credit"),
         "has_video": bool(clips),
-        # Stated in the payload so the client never has to imply footage exists.
+        # Stated in the payload so the client never has to imply that footage
+        # or action photography exists when it doesn't.
         "provenance": (
-            "Moments derived from the official timestamped event feed. "
-            + ("Video supplied from the configured licensed source."
+            "Moments from the official timestamped event feed. Images are player "
+            "portraits and stadium photography from the data provider — it "
+            "publishes no action photography, so these are not pictures of the "
+            "goals themselves. "
+            + ("Video and any action shots come from the configured licensed source."
                if clips else
-               "No licensed video is configured for this match.")
+               "No licensed video or action photography is configured for this match.")
         ),
     }
 
 
-def build(context: dict[str, Any], fixture_id: int) -> dict[str, Any]:
+def _venue(context: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The ground, with its photograph where the provider has one.
+
+    Real architectural photography of the actual stadium — the one piece of
+    scene-setting imagery genuinely available for a match. The id is often
+    absent on older or neutral-venue fixtures, in which case the name still
+    stands on its own.
+    """
+    raw = ((context.get("fixture") or {}).get("fixture") or {}).get("venue") or {}
+    name = raw.get("name")
+    if not name:
+        return None
+    venue_id = raw.get("id")
     return {
-        "moments": build_moments(context),
+        "name": name,
+        "city": raw.get("city"),
+        "photo": f"/api/venue-photo/{venue_id}" if venue_id else None,
+    }
+
+
+def build(context: dict[str, Any], fixture_id: int) -> dict[str, Any]:
+    moments = build_moments(context)
+    config = _clip_config().get(str(fixture_id)) or {}
+
+    # A licensed action photograph, keyed by moment id or by minute, replaces
+    # the player portrait for that moment. Nothing here ships with the app.
+    images = config.get("images") or {}
+    if images:
+        for moment in moments:
+            override = images.get(moment["id"]) or images.get(str(moment["minute"]))
+            if override:
+                moment["image"] = override
+                moment["image_credit"] = config.get("image_credit")
+
+    return {
+        "moments": moments,
         "shootout": build_shootout(context),
+        "venue": _venue(context),
         **clips_for(fixture_id),
     }

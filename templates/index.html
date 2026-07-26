@@ -684,23 +684,42 @@
     .hl-player video { width: 100%; display: block; aspect-ratio: 16 / 9; background: #05070c; }
     .hl-credit { padding: 0.5rem 0.8rem; font-size: 0.7rem; color: var(--text-dim); }
 
-    .hl-novideo {
-      display: flex; gap: 0.9rem; align-items: flex-start;
-      padding: 1rem 1.1rem; margin-bottom: 1.1rem;
-      background: rgba(255, 255, 255, 0.032);
-      border: 1px dashed var(--border-bright); border-radius: 14px;
+    /* Real photograph of the ground, dimmed so the caption stays legible. */
+    .hl-venue {
+      position: relative; height: 132px; border-radius: 14px; overflow: hidden;
+      margin-bottom: 1.1rem; border: 1px solid var(--border);
+      background-image: linear-gradient(180deg,
+        rgba(6,9,16,0.15) 0%, rgba(6,9,16,0.55) 55%, rgba(6,9,16,0.94) 100%), var(--shot);
+      background-size: cover, cover; background-position: center 42%, center 42%;
     }
-    .hl-novideo-mark { font-size: 1.5rem; line-height: 1; opacity: 0.75; }
-    .hl-novideo strong { font-size: 0.9rem; }
-    .hl-novideo p { margin: 0.3rem 0 0; font-size: 0.8rem; color: var(--text-dim); line-height: 1.55; }
-    .hl-novideo code {
-      background: rgba(255,255,255,0.07); border-radius: 4px;
-      padding: 0.05rem 0.3rem; font-size: 0.76rem;
+    .hl-venue-label {
+      position: absolute; left: 0.95rem; bottom: 0.75rem;
+      display: flex; align-items: baseline; gap: 0.55rem;
     }
+    .hl-venue-label strong { font-size: 0.95rem; }
+    .hl-venue-label span {
+      font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    /* The photograph attached to a moment. Circular and ringed in the team's
+       colour so the reel reads as faces first, text second. */
+    .hl-face {
+      width: 46px; height: 46px; flex-shrink: 0;
+      border-radius: 50%; overflow: hidden;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: color-mix(in srgb, var(--c, #7c869c) 22%, #0c111b);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--c, #7c869c) 68%, transparent);
+    }
+    .hl-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .hl-face.empty { font-size: 1.05rem; }
+    /* A licensed action shot is wider than a portrait — give it room. */
+    .hl-face.action { width: 82px; height: 46px; border-radius: 9px; }
+    .hl-face.sm { width: 26px; height: 26px; box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--c) 68%, transparent); }
 
     .hl-reel { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
     .hl-moment {
-      display: grid; grid-template-columns: 3.1rem 1.4rem 1fr auto;
+      display: grid; grid-template-columns: auto 3.1rem 1.4rem 1fr auto;
       align-items: center; gap: 0.65rem;
       padding: 0.6rem 0.75rem; border-radius: 11px;
       background: rgba(255, 255, 255, 0.035);
@@ -742,11 +761,11 @@
     }
     .hl-kicks {
       list-style: none; margin: 0; padding: 0;
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 0.35rem;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 0.35rem;
     }
     .hl-kicks li {
-      display: flex; align-items: center; gap: 0.5rem;
-      padding: 0.4rem 0.6rem; border-radius: 9px;
+      display: flex; align-items: center; gap: 0.45rem;
+      padding: 0.35rem 0.55rem; border-radius: 9px;
       background: rgba(255,255,255,0.035);
       border-left: 3px solid var(--c);
       font-size: 0.8rem;
@@ -758,7 +777,9 @@
     .hl-kick-run {
       margin-left: auto; font-variant-numeric: tabular-nums;
       color: var(--text-dim); font-size: 0.74rem;
+      white-space: nowrap; flex-shrink: 0;   /* never wrap the running tally */
     }
+    .hl-kick-name { min-width: 0; flex: 1 1 auto; }
 
     .hl-empty { padding: 0.9rem 0; color: var(--text-dim); font-size: 0.85rem; }
     .hl-provenance {
@@ -2160,10 +2181,9 @@
       const clips = data.clips || [];
       const sideColor = (m) => esc(m.is_home ? match.home.color : match.away.color);
 
-      /* The player is only rendered when a licensed source is configured.
-         Match footage is owned by whoever filmed it, so nothing ships with the
-         app — rather than showing a dead <video> we say what is and isn't
-         here, and the moment reel below stands on its own regardless. */
+      /* Video renders only when a licensed source is configured. Match footage
+         belongs to whoever filmed it, so nothing ships with the app. Absent a
+         clip, the panel leads with the photo reel rather than an apology. */
       const player = clips.length
         ? `<div class="hl-player">
              <video id="hl-video" controls preload="metadata"
@@ -2174,21 +2194,36 @@
              </video>
              ${data.credit ? `<div class="hl-credit">${esc(data.credit)}</div>` : ""}
            </div>`
-        : `<div class="hl-novideo">
-             <div class="hl-novideo-mark">🎬</div>
-             <div>
-               <strong>No video configured for this match.</strong>
-               <p>Match footage is owned by the broadcasters who filmed it, so none
-                  is bundled or fetched here. Add licensed sources to
-                  <code>services/highlights_data.json</code> and they play in this
-                  panel, cued to the moments below.</p>
+        : "";
+
+      /* Scene-setter: real photography of the ground the match was played at,
+         where the provider holds a shot of it. */
+      const v = data.venue;
+      const venueBand = v && v.photo
+        ? `<div class="hl-venue" style="--shot:url('${esc(v.photo)}')">
+             <div class="hl-venue-label">
+               <strong>${esc(v.name)}</strong>${v.city ? `<span>${esc(v.city)}</span>` : ""}
              </div>
-           </div>`;
+           </div>`
+        : "";
+
+      /* Each moment carries a real photograph: a licensed action shot where one
+         is configured, otherwise the portrait of the player who produced it.
+         The provider publishes no action photography at all, so the portrait is
+         the closest real image of the moment obtainable. */
+      const shot = (m) => {
+        const src = m.image || m.photo;
+        if (!src) return `<span class="hl-face empty">${MOMENT_ICON[m.kind] || "•"}</span>`;
+        return `<span class="hl-face${m.image ? " action" : ""}">
+                  <img src="${esc(src)}" alt="" loading="eager" onerror="this.remove()">
+                </span>`;
+      };
 
       const reel = moments.length
         ? `<ol class="hl-reel">${moments.map((m) => `
              <li class="hl-moment ${m.kind}" style="--c:${sideColor(m)}"
                  ${m.clip_start != null ? `data-seek="${m.clip_start}"` : ""}>
+               ${shot(m)}
                <span class="hl-min">${esc(m.minute_label)}</span>
                <span class="hl-icon">${MOMENT_ICON[m.kind] || "•"}</span>
                <span class="hl-what">
@@ -2209,6 +2244,8 @@
              <ol class="hl-kicks">${s.kicks.map((k) => `
                <li class="${k.scored ? "in" : "out"}"
                    style="--c:${esc(k.is_home ? match.home.color : match.away.color)}">
+                 <span class="hl-face sm">${k.photo
+                   ? `<img src="${esc(k.photo)}" alt="" loading="eager" onerror="this.remove()">` : ""}</span>
                  <span class="hl-kick-mark">${k.scored ? "✓" : "✗"}</span>
                  <span class="hl-kick-name">${esc(k.player || "")}</span>
                  <span class="hl-kick-run">${esc(k.running)}</span>
@@ -2217,7 +2254,7 @@
         : "";
 
       $("highlights-body").innerHTML =
-        player + reel + shootout +
+        venueBand + player + reel + shootout +
         `<p class="hl-provenance">${esc(data.provenance || "")}</p>`;
 
       // With video present, a moment carrying a timestamp seeks the player.
@@ -2708,9 +2745,9 @@
           competition_id: meta.competition_id,
           venue: meta.venue,
           home: { id: meta.home_id, name: meta.home, score: meta.home_score,
-                  color: meta.home_color, short: "" },
+                  color: meta.home_color, short: meta.home_short || "" },
           away: { id: meta.away_id, name: meta.away, score: meta.away_score,
-                  color: meta.away_color, short: "" },
+                  color: meta.away_color, short: meta.away_short || "" },
         });
       } catch {
         showView("home", false);
