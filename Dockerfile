@@ -14,7 +14,6 @@ COPY . .
 # this path in production — otherwise every deploy throws away paid analyses
 # and re-fetches provider data that counts against the daily quota.
 RUN mkdir -p /app/.cache
-VOLUME ["/app/.cache"]
 
 ENV PORT=8000
 EXPOSE 8000
