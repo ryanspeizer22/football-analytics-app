@@ -44,6 +44,91 @@ def _summarise_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _trends(h2h: list[dict[str, Any]], home_name: str, away_name: str,
+            home_fixtures: list[dict[str, Any]], away_fixtures: list[dict[str, Any]],
+            home_id: int, away_id: int) -> dict[str, Any]:
+    """Pre-compute the aggregates a writer would otherwise tally by hand.
+
+    A model reads a result off a single row reliably and counts across rows
+    unreliably. In testing, one dossier correctly cited a 2-2 draw in one
+    bullet and then claimed no meeting in the same list had exceeded three
+    goals in another — the facts were right, the arithmetic over them wasn't.
+    Deriving the totals here and handing them over as findings takes the
+    counting out of the model's job, which is the half it is worst at.
+    """
+    def side(match: dict[str, Any], name: str) -> tuple[Optional[int], Optional[int]]:
+        """(goals for, goals against) for `name` in this match."""
+        if match["home"] == name:
+            return match["home_goals"], match["away_goals"]
+        return match["away_goals"], match["home_goals"]
+
+    played = [m for m in h2h if m["home_goals"] is not None and m["away_goals"] is not None]
+    wins = draws = losses = 0
+    goals_for = goals_against = 0
+    at_home = {"played": 0, "wins": 0, "draws": 0, "losses": 0}
+    for m in played:
+        gf, ga = side(m, home_name)
+        goals_for += gf
+        goals_against += ga
+        outcome = "wins" if gf > ga else ("draws" if gf == ga else "losses")
+        wins += outcome == "wins"
+        draws += outcome == "draws"
+        losses += outcome == "losses"
+        if m["home"] == home_name:
+            at_home["played"] += 1
+            at_home[outcome] += 1
+
+    def form_totals(fixtures: list[dict[str, Any]], name: str) -> dict[str, Any]:
+        scored = conceded = clean_sheets = blanks = 0
+        counted = 0
+        for f in fixtures:
+            gf, ga = side(f, name)
+            if gf is None or ga is None:
+                continue
+            counted += 1
+            scored += gf
+            conceded += ga
+            clean_sheets += ga == 0
+            blanks += gf == 0
+        return {"matches": counted, "goals_scored": scored, "goals_conceded": conceded,
+                "clean_sheets": clean_sheets, "failed_to_score": blanks}
+
+    return {
+        "note": ("Aggregates computed from the data below. Use these figures "
+                 "verbatim for any counting claim."),
+        "h2h_record": {
+            "described_from": home_name,
+            "played": len(played),
+            "wins": wins, "draws": draws, "losses": losses,
+            "unbeaten_run_covers_whole_record": losses == 0 and len(played) > 0,
+            "goals_for": goals_for, "goals_against": goals_against,
+        },
+        # Deliberately not "at this venue": clubs move grounds (Everton left
+        # Goodison for Hill Dickinson), so past home wins may have been at a
+        # different stadium. The key says what is actually true of the data.
+        "h2h_with_home_side_at_home": at_home,
+        "h2h_matches_over_three_goals": [
+            f"{m['date']}: {m['home']} {m['home_goals']}-{m['away_goals']} {m['away']}"
+            for m in played if m["home_goals"] + m["away_goals"] > 3
+        ],
+        "h2h_tight_games": {
+            "decided_by_one_goal_or_drawn": sum(
+                1 for m in played if abs(m["home_goals"] - m["away_goals"]) <= 1),
+            "of_total": len(played),
+        },
+        "h2h_competitions": sorted({m["competition"] for m in played if m["competition"]}),
+        "h2h_by_competition": {
+            comp: sum(1 for m in played if m["competition"] == comp)
+            for comp in sorted({m["competition"] for m in played if m["competition"]})
+        },
+        "h2h_date_range": (f"{played[-1]['date']} to {played[0]['date']}" if played else None),
+        "recent_form_totals": {
+            home_name: form_totals(home_fixtures, home_name),
+            away_name: form_totals(away_fixtures, away_name),
+        },
+    }
+
+
 def build_dossier_context(fixture_id: int) -> dict[str, Any]:
     """Gather the historical record behind an upcoming fixture."""
     from services import api_service
@@ -83,6 +168,9 @@ def build_dossier_context(fixture_id: int) -> dict[str, Any]:
         )[:H2H_COUNT]
     ]
 
+    home_fx = [_summarise_fixture(f) for f in home_recent]
+    away_fx = [_summarise_fixture(f) for f in away_recent]
+
     return {
         "fixture": {
             "id": fixture_id,
@@ -97,13 +185,17 @@ def build_dossier_context(fixture_id: int) -> dict[str, Any]:
         "away_team": {"id": away.get("id"), "name": away.get("name")},
         "home_form": {
             "record": "".join(_result_for(f, home.get("id")) for f in home_recent),
-            "fixtures": [_summarise_fixture(f) for f in home_recent],
+            "fixtures": home_fx,
         },
         "away_form": {
             "record": "".join(_result_for(f, away.get("id")) for f in away_recent),
-            "fixtures": [_summarise_fixture(f) for f in away_recent],
+            "fixtures": away_fx,
         },
         "head_to_head": h2h,
+        "computed_trends": _trends(
+            h2h, home.get("name"), away.get("name"),
+            home_fx, away_fx, home.get("id"), away.get("id"),
+        ),
     }
 
 
