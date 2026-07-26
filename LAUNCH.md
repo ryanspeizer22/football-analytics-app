@@ -30,6 +30,26 @@ Health check  GET /health
 Start         already in the Dockerfile (--proxy-headers is set)
 ```
 
+**On Railway the volume cannot be declared in `railway.json`.** Render reads the
+`disk:` block in `render.yaml`, but Railway's config-as-code schema has no
+volume or disk property — committing one does nothing, and the service silently
+deploys with an ephemeral filesystem. Attach it once per environment, out of
+band:
+
+```
+railway volume add -m /app/.cache      # or: ⌘K in the dashboard → New Volume
+```
+
+Two consequences worth knowing before you do it. Volumes mount at container
+start, not at build time, so the `mkdir /app/.cache` in the Dockerfile is
+shadowed by the mount — the app recreates the tree at startup, which is why
+that works. And a service with a volume attached can no longer run two
+deployments at once, so redeploys take a few seconds of downtime even with the
+health check configured.
+
+To verify it took: the app logs a warning at startup when `/app/.cache` is not
+a mount point (`main.py`), so a clean startup log is the confirmation.
+
 **Set `FORWARDED_ALLOW_IPS` to your platform's proxy address, and never to
 `*`.** This is the one setting here that silently costs money if it is wrong.
 Uvicorn rewrites `request.client` from `X-Forwarded-For` for any peer it

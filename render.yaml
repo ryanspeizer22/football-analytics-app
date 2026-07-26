@@ -11,8 +11,9 @@ services:
     numInstances: 1
     disk:
       name: pitchsense-cache
-      # Must match the VOLUME in the Dockerfile. Without it every deploy discards
-      # generated analyses and cached provider media.
+      # Must match the cache root the app writes to (`.cache/`, resolved against
+      # the /app WORKDIR). Without it every deploy discards generated analyses
+      # and cached provider media.
       mountPath: /app/.cache
       sizeGB: 10
     envVars:
