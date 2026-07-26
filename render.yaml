@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: pitchsense
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    # One instance on purpose. The rate limiter and the summary cache both hold
+    # state in-process, so a second instance doubles the effective spend cap and
+    # re-pays for analyses the other has already generated. Scaling out needs the
+    # Redis backend described in LAUNCH.md phase 3 first.
+    numInstances: 1
+    disk:
+      name: pitchsense-cache
+      # Must match the VOLUME in the Dockerfile. Without it every deploy discards
+      # generated analyses and cached provider media.
+      mountPath: /app/.cache
+      sizeGB: 10
+    envVars:
+      - key: PITCHSENSE_BASE_URL
+        sync: false          # set to the real origin; also disables the local bypass
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FOOTBALL_API_KEY
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false          # unset disables token founder access, which is safe
+      - key: FORWARDED_ALLOW_IPS
+        sync: false          # the platform's proxy address — never "*"
+      - key: RATE_LIMIT_DAILY_MAX
+        value: "150"

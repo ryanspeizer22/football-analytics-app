@@ -30,10 +30,19 @@ Health check  GET /health
 Start         already in the Dockerfile (--proxy-headers is set)
 ```
 
-`--proxy-headers` is already configured, which matters: `_client_id()`
-deliberately ignores `X-Forwarded-For` unless the proxy is trusted, and the
-per-client rate limit depends on `request.client` being the real caller. Also
-set `--forwarded-allow-ips` to the platform's proxy range.
+**Set `FORWARDED_ALLOW_IPS` to your platform's proxy address, and never to
+`*`.** This is the one setting here that silently costs money if it is wrong.
+Uvicorn rewrites `request.client` from `X-Forwarded-For` for any peer it
+trusts, and the per-client rate limit keys on `request.client` — so with `*`
+any caller can send a different address on every request, mint a fresh identity
+each time, and never reach the cap on paid generations. Measured directly: with
+`*` a spoofed header set `client.host` to an arbitrary address; with a
+restricted range it stayed the real peer.
+
+The shipped `Procfile` and `Dockerfile` default to trusting only the loopback
+peer. That is safe but shares one rate-limit bucket across all users if the
+proxy is not on loopback, so set the real range. The app logs an error at
+startup if it sees `*`.
 
 **Domain.** Point `pitchsense.com` at the service, add `www` as a redirect, and
 set `PITCHSENSE_BASE_URL=https://pitchsense.com`. That variable is not
@@ -41,7 +50,13 @@ cosmetic — canonical links, the sitemap and every OpenGraph image URL are buil
 from it, and crawlers will not resolve relative paths. Getting it wrong means
 every shared link unfurls against `127.0.0.1`.
 
-- [ ] Deploy from Dockerfile, volume mounted at `/app/.cache`
+- [ ] Deploy from Dockerfile, volume mounted at `/app/.cache`. Everything the
+      app writes lives under that one path — generated analyses, match
+      contexts, crests, headshots, competition logos, OG cards and YouTube
+      thumbnails, about 39MB after normal use. Without the volume every deploy
+      throws away paid analyses and re-fetches provider data against a metered
+      quota; the app warns at startup when the directory is not a mount point.
+- [ ] `FORWARDED_ALLOW_IPS` set to the platform's proxy address (never `*`)
 - [ ] `PITCHSENSE_BASE_URL` set to the real origin
 - [ ] DNS + TLS, `www` → apex redirect
 - [ ] Confirm `/og/match/979139.png` renders with real fonts in the container

@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+# Never bake the cache into an image: it is large, machine-specific, and the
+# whole point is that it lives on a mounted volume that survives deploys.
+.cache
+.claude
+*.md
+!LAUNCH.md

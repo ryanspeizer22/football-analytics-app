@@ -73,6 +73,45 @@ app = FastAPI(
     version="0.1.0",
 )
 
+@app.on_event("startup")
+def _preflight() -> None:
+    """Shout about configurations that are quietly expensive or unsafe.
+
+    Each of these is silent at runtime and only shows up on the bill or in an
+    incident, so they are checked once, out loud, at boot.
+    """
+    is_production = BASE_URL and not any(
+        h in BASE_URL for h in ("127.0.0.1", "localhost"))
+
+    if os.environ.get("FORWARDED_ALLOW_IPS", "").strip() == "*":
+        logger.error(
+            "FORWARDED_ALLOW_IPS='*' — uvicorn will trust X-Forwarded-For from "
+            "anyone, so request.client is caller-controlled and the per-client "
+            "rate limit can be bypassed by rotating the header. Set this to the "
+            "platform's proxy address.")
+
+    if is_production:
+        if rate_limit._bypass_enabled():
+            logger.error(
+                "Local rate-limit bypass is ON with a public base URL (%s). "
+                "Unset RATE_LIMIT_BYPASS_LOCAL unless this is deliberate.", BASE_URL)
+        for key in ("ANTHROPIC_API_KEY", "FOOTBALL_API_KEY"):
+            if not os.environ.get(key):
+                logger.error("%s is not set — the app will fail on first use.", key)
+        if not os.environ.get("ADMIN_TOKEN"):
+            logger.info("ADMIN_TOKEN unset: founder access by token is disabled.")
+    else:
+        logger.info("Local mode: rate-limit bypass %s, base URL %s",
+                    "on" if rate_limit._bypass_enabled() else "off", BASE_URL)
+
+    cache_root = PHOTO_CACHE_DIR.parent
+    cache_root.mkdir(parents=True, exist_ok=True)
+    if is_production and not os.path.ismount(str(cache_root)):
+        logger.warning(
+            "%s is not a mount point. Without a persistent volume there, every "
+            "deploy discards paid analyses and cached provider data.", cache_root)
+
+
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
