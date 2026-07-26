@@ -17,6 +17,7 @@ single-process deployment the numbers below are exact. A multi-process or
 multi-instance deployment should move this state to Redis.
 """
 
+import hmac
 import logging
 import os
 import threading
@@ -66,6 +67,34 @@ def is_local(client_id: str) -> bool:
     return client_id in LOOPBACK
 
 
+# Header carrying the founder token on a remote session. The token itself is
+# never in the codebase — it comes from the environment.
+ADMIN_HEADER = "X-PitchSense-Admin"
+
+
+def admin_token_valid(supplied: Optional[str]) -> bool:
+    """Whether a supplied token matches the configured founder token.
+
+    Two things here are deliberate. The comparison is constant-time, because a
+    naive == leaks the token a character at a time to anyone willing to time
+    the responses. And an unset ADMIN_TOKEN disables token auth outright rather
+    than admitting everyone — a bare header flag with no secret behind it would
+    let any visitor switch off every spend limit in the app, which is worse
+    than having no admin mode at all.
+    """
+    expected = os.environ.get("ADMIN_TOKEN") or ""
+    if not expected or not supplied:
+        return False
+    return hmac.compare_digest(supplied, expected)
+
+
+def is_founder(client_id: str, admin_token: Optional[str] = None) -> bool:
+    """Whether this caller is exempt from quotas entirely."""
+    if admin_token_valid(admin_token):
+        return True
+    return is_local(client_id) and _bypass_enabled()
+
+
 class RateLimitExceeded(Exception):
     """Raised when a paid call would breach a limit. Carries a Retry-After."""
 
@@ -105,23 +134,23 @@ class guard:
     they intentionally measure spend over time.
     """
 
-    def __init__(self, client_id: str, label: str = "generation"):
+    def __init__(self, client_id: str, label: str = "generation",
+                 admin_token: Optional[str] = None):
         self.client_id = client_id
         self.label = label
+        self.admin_token = admin_token
 
     def __enter__(self) -> "guard":
         global _day_count, _in_flight
         now = time.time()
-        local = is_local(self.client_id) and _bypass_enabled()
+        founder = is_founder(self.client_id, self.admin_token)
         with _lock:
             _roll_day(now)
 
-            # Local development still counts toward the daily total — that is
-            # the guard against an accidentally expensive afternoon, and it is
-            # worth keeping. What it skips is the per-client window and the
-            # concurrency cap, which are there to stop one visitor crowding
-            # out others and have no meaning when the visitor is you.
-            if local:
+            # A founder session passes every gate. The spend is still counted,
+            # so /health keeps reporting the real number and an expensive
+            # afternoon is still visible — it simply never becomes a wall.
+            if founder:
                 hits = _client_hits[self.client_id]
                 _prune(hits, now)
                 hits.append(now)
@@ -186,4 +215,5 @@ def snapshot() -> dict[str, int]:
             "in_flight": _in_flight,
             "max_concurrent": MAX_CONCURRENT,
             "local_bypass": _bypass_enabled(),
+            "admin_token_configured": bool(os.environ.get("ADMIN_TOKEN")),
         }

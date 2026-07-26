@@ -102,6 +102,41 @@ def _client_id(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# Kept beside the client-side constant of the same value; both describe the
+# same allowance and should move together.
+FREE_FRESH_ANALYSES = 5
+
+
+def _admin_token(request: Request) -> Optional[str]:
+    return request.headers.get(rate_limit.ADMIN_HEADER)
+
+
+def _is_founder(request: Request) -> bool:
+    return rate_limit.is_founder(_client_id(request), _admin_token(request))
+
+
+@app.get("/api/session")
+def session_state(request: Request):
+    """Who the caller is, as far as quotas are concerned.
+
+    The client asks once and shows unlimited access rather than a countdown
+    when this says so. Deliberately server-answered: letting the page decide it
+    was a founder would make the whole thing a client-side claim anyone could
+    set for themselves.
+    """
+    token = _admin_token(request)
+    # Token first: a loopback caller with a valid token was admitted by the
+    # token, and reporting "localhost" there would misdescribe how access was
+    # granted — which matters when checking that token auth actually works.
+    by_token = rate_limit.admin_token_valid(token)
+    founder = by_token or _is_founder(request)
+    return {
+        "founder": founder,
+        "reason": "token" if by_token else ("localhost" if founder else None),
+        "free_fresh_analyses": None if founder else FREE_FRESH_ANALYSES,
+    }
+
+
 @contextmanager
 def _paid_call(request: Request, label: str):
     """Reserve a slot for a billable model call, surfacing a breach as HTTP 429.
@@ -110,7 +145,8 @@ def _paid_call(request: Request, label: str):
     or free reads would consume the budget.
     """
     try:
-        with rate_limit.guard(_client_id(request), label):
+        with rate_limit.guard(_client_id(request), label,
+                              admin_token=_admin_token(request)):
             yield
     except rate_limit.RateLimitExceeded as exc:
         raise HTTPException(

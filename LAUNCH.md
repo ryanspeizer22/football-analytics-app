@@ -61,6 +61,15 @@ environment at import time via `load_dotenv()`.
 - [ ] Restrict the Anthropic key to the minimum scope available, and set a
       hard monthly spend cap in the console. This is the single largest cost
       risk in the app — one uncached match is a real model call.
+- [ ] Set `ADMIN_TOKEN` to a long random value. It is what grants founder
+      access from a browser that is not on the server, and without it set,
+      token auth is disabled entirely (which is the safe default). Never commit
+      it; rotate it like any other secret.
+- [ ] Confirm `PITCHSENSE_BASE_URL` is set to the real domain. It doubles as
+      the switch that disables the loopback rate-limit bypass — without it, a
+      reverse proxy on the same host makes every request look local.
+      `/health` reports `local_bypass` and `admin_token_configured`; check both
+      after the first deploy.
 - [ ] Review the rate limiter for public traffic. `services/rate_limit.py`
       currently enforces a per-client sliding window, a global daily cap and a
       concurrency semaphore, counting only cache misses. The daily cap of 150
