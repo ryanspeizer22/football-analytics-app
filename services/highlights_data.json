@@ -12,24 +12,27 @@
     "holder's own upload, which they can withdraw at any time. Action stills go",
     "in `images` (by moment id m0, m1... or by minute) and require a licence —",
     "press photography of goal celebrations is agency-owned and cannot be",
-    "pulled automatically. Self-hosted files go in `clips`."
+    "pulled automatically. Self-hosted files go in `clips`.",
+    "Premier League ids come from broadcasters, not clubs: the league licenses highlight rights exclusively, so club channels legally cannot post them."
   ],
-
   "979139": {
     "youtube": "RgqKdplLIk4",
     "youtube_channel": "FIFA",
     "youtube_title": "FULL MATCH: Argentina v France | 2022 FIFA World Cup Final"
   },
-
   "152855": {
     "youtube": "h4m68r8kWAc",
     "youtube_channel": "FC Barcelona",
     "youtube_title": "FC BARCELONA 6-1 PSG | Match highlights"
   },
-
   "723370": {
     "youtube": "OvK4ReWujt0",
     "youtube_channel": "BBC Sport",
     "youtube_title": "Highlights: Italy win tense final on penalties | UEFA Euro 2020"
+  },
+  "1379336": {
+    "youtube": "6AAjNlLCBb8",
+    "youtube_channel": "NBC Sports",
+    "youtube_title": "Manchester United v. Nottingham Forest | PREMIER LEAGUE HIGHLIGHTS | 5/17/2026"
   }
 }

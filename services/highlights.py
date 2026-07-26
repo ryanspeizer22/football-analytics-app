@@ -206,7 +206,7 @@ def _provenance(clips: list, youtube: Optional[dict], images: Optional[dict]) ->
     return " ".join(parts)
 
 
-def clips_for(fixture_id: int) -> dict[str, Any]:
+def clips_for(fixture_id: int, resolved: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Any configured video for this fixture. Empty when none is licensed.
 
     `provenance` is built here rather than in `build` on purpose: the moments
@@ -216,7 +216,12 @@ def clips_for(fixture_id: int) -> dict[str, Any]:
     """
     entry = _clip_config().get(str(fixture_id)) or {}
     clips = entry.get("clips") or []
-    youtube_id = entry.get("youtube")
+    # Hand-verified mapping first; an auto-resolved video only fills a gap.
+    youtube_id = entry.get("youtube") or (resolved or {}).get("id")
+    if not entry.get("youtube") and resolved:
+        entry = {**entry,
+                 "youtube_channel": resolved.get("channel"),
+                 "youtube_title": resolved.get("title")}
     youtube = None
     if youtube_id:
         youtube = {
@@ -268,9 +273,49 @@ def _venue(context: dict[str, Any]) -> Optional[dict[str, Any]]:
     }
 
 
+def auto_map(context: dict[str, Any], fixture_id: int) -> Optional[dict[str, Any]]:
+    """Look up an official highlights video for this fixture, once, and keep it.
+
+    The manual map wins wherever it has an entry — those ids were each verified
+    by hand against the uploading channel. This fills the rest in, and only
+    with candidates that clear the resolver's checks.
+
+    The result is cached permanently either way, including the misses: a match
+    with no official upload today will not have one tomorrow, and re-searching
+    would burn the API's daily quota discovering that repeatedly.
+    """
+    from services import summary_cache, youtube
+
+    if (_clip_config().get(str(fixture_id)) or {}).get("youtube"):
+        return None                       # already mapped by hand
+    if not youtube.api_key():
+        return None                       # no key configured; stay inert
+
+    cache_key = f"yt-{fixture_id}"
+    cached = summary_cache.get(cache_key)
+    if cached is not None:
+        return cached or None             # {} is a remembered miss
+
+    fixture = context.get("fixture") or {}
+    teams = fixture.get("teams") or {}
+    home, away = teams.get("home") or {}, teams.get("away") or {}
+    found = youtube.resolve(
+        home.get("name") or "", away.get("name") or "",
+        (fixture.get("fixture") or {}).get("date") or "",
+        (fixture.get("league") or {}).get("name") or "",
+        home_id=home.get("id"), away_id=away.get("id"),
+    )
+    summary_cache.set(cache_key, found or {})
+    return found
+
+
 def build(context: dict[str, Any], fixture_id: int) -> dict[str, Any]:
+    from services import youtube
+
     moments = build_moments(context)
     config = _clip_config().get(str(fixture_id)) or {}
+    fixture = context.get("fixture") or {}
+    sides = fixture.get("teams") or {}
 
     # A licensed action photograph, keyed by moment id or by minute, replaces
     # the player portrait for that moment. Nothing here ships with the app.
@@ -282,9 +327,21 @@ def build(context: dict[str, Any], fixture_id: int) -> dict[str, Any]:
                 moment["image"] = override
                 moment["image_credit"] = config.get("image_credit")
 
-    return {
+    payload = {
         "moments": moments,
         "shootout": build_shootout(context),
         "venue": _venue(context),
-        **clips_for(fixture_id),
+        **clips_for(fixture_id, auto_map(context, fixture_id)),
     }
+    # Always present. It backs two cases: no video resolved at all, and a
+    # resolved video that turns out to be unplayable for this viewer — highlight
+    # rights are territorial, so an NBC upload is US-only and a Sky one UK-only.
+    # A link, not an embed: YouTube removed search embeds, so an iframe pointed
+    # at a search renders Error 153, which is the dead player worth avoiding.
+    if True:
+        payload["search_url"] = youtube.search_url(
+            (sides.get("home") or {}).get("name") or "",
+            (sides.get("away") or {}).get("name") or "",
+            (fixture.get("fixture") or {}).get("date") or "",
+        )
+    return payload

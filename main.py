@@ -55,6 +55,7 @@ from services import (
     summary_cache,
     teams,
     textclean,
+    youtube,
 )
 from services.trending import TRENDING
 
@@ -909,50 +910,126 @@ def match_meta(fixture_id: int):
     return _with_colors(summary_cache.get(f"meta-{fixture_id}") or {})
 
 
-@app.get("/api/match/{fixture_id}/narrative")
-def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
-    """The Shockwave + Tactical halves, without waiting on player notes.
+def _legacy_slice(fixture_id: int, keys: tuple, require: tuple) -> Optional[dict]:
+    """Pull one half out of a narrative cached before the split.
 
-    Generation time scales with output volume, and the ~32 per-player notes
-    dominate it. Splitting lets this land in roughly half the time so the UI
-    has something real to show while the player pass finishes.
+    Those entries hold both halves in one blob, so reusing them saves paying to
+    regenerate text we already have. Returns None unless every key in `require`
+    is present — some early entries are partial, and half an opening on screen
+    is worse than regenerating it.
     """
-    cache_key = f"narr-{fixture_id}"
-    if not refresh:
-        cached = summary_cache.get(cache_key)
-        if cached is not None:
-            return _refresh_derived(textclean.clean(cached), fixture_id)
+    legacy = summary_cache.get(f"narr-{fixture_id}")
+    if not legacy or any(not legacy.get(k) for k in require):
+        return None
+    return {k: legacy[k] for k in keys if k in legacy}
 
+
+def _derived_for(fixture_id: int) -> dict:
+    """Momentum and stat comparisons, recomputed. No model or provider call."""
+    try:
+        return _derived(api_service.build_match_context(fixture_id), fixture_id)
+    except Exception:
+        logger.info("Context unavailable for %s; serving without derived data", fixture_id)
+        return {}
+
+
+def _narrative_prelude(fixture_id: int):
+    """Context, stored metadata and the free derived data, for either pass."""
     try:
         context = api_service.build_match_context(fixture_id)
     except api_service.FootballAPIError as exc:
         logger.warning("Fixture %s unavailable: %s", fixture_id, exc)
         raise _api_error(exc) from exc
-
     _store_match_meta(context, fixture_id)
-
     # Derived first: the stat tiles it produces are handed to the model as the
     # figures already on screen, so the prose stops restating them.
-    derived = _derived(context, fixture_id)
+    return context, _derived(context, fixture_id)
 
-    with _paid_call(request, f"narrative {fixture_id}"):
-        logger.info("Generating narrative for fixture %s", fixture_id)
+
+def _cacheable(context: dict) -> bool:
+    return context["fixture"].get("fixture", {}).get("status", {}).get("short") in FINISHED_STATUSES
+
+
+@app.get("/api/match/{fixture_id}/derived")
+def match_derived(fixture_id: int):
+    """Momentum, stat comparisons and the headline tiles — no model involved.
+
+    Pure computation over data already on disk, so it answers in about a
+    millisecond. Served separately so the chart and the stat tiles can paint
+    immediately instead of riding along with a generation that takes ten
+    seconds or more.
+    """
+    return _derived_for(fixture_id)
+
+
+@app.get("/api/match/{fixture_id}/opening")
+def match_opening(request: Request, fixture_id: int, refresh: bool = False):
+    """Headline, summary and momentum bullets — the first thing on screen.
+
+    Split from the analysis because generation latency tracks output volume:
+    the full narrative emits ~3,700 tokens and takes about a minute, while this
+    emits ~470 and lands in ten seconds. The client requests both at once, so
+    the page fills in from the top instead of waiting on the whole thing.
+    """
+    cache_key = f"open-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key) or _legacy_slice(
+            fixture_id, ("headline", "tldr", "momentum_takeaways"), require=("headline", "tldr"))
+        if cached:
+            # Derived data is recomputed rather than served from the cache —
+            # it is free, and freezing it is how the Euro final kept reporting
+            # a 130-minute match after the shootout fix landed.
+            return {**textclean.clean(cached), **_derived_for(fixture_id)}
+
+    context, derived = _narrative_prelude(fixture_id)
+    with _paid_call(request, f"opening {fixture_id}"):
+        logger.info("Generating opening for fixture %s", fixture_id)
         try:
-            narrative = ai_summarizer.generate_narrative(
-                context, derived.get("headline_metrics")
-            )
+            opening = ai_summarizer.generate_opening(context, derived.get("headline_metrics"))
         except RuntimeError as exc:
-            logger.error("Narrative failed for %s: %s", fixture_id, exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    result = textclean.clean(narrative.model_dump())
-    result["team_breakdowns"] = _home_first(result.get("team_breakdowns") or [], context)
+    result = textclean.clean(opening.model_dump())
+    if _cacheable(context):
+        summary_cache.set(cache_key, result)
     result.update(derived)
+    return result
 
-    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
-    if status in FINISHED_STATUSES:
+
+@app.get("/api/match/{fixture_id}/analysis")
+def match_analysis(request: Request, fixture_id: int, refresh: bool = False):
+    """The analytical reads and both team breakdowns — fills in behind."""
+    cache_key = f"anal-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key) or _legacy_slice(
+            fixture_id,
+            ("decisive_factor", "misleading_stat", "tactical_shifts", "team_breakdowns"),
+            require=("team_breakdowns",))
+        if cached:
+            return textclean.clean(cached)
+
+    context, derived = _narrative_prelude(fixture_id)
+    with _paid_call(request, f"analysis {fixture_id}"):
+        logger.info("Generating analysis for fixture %s", fixture_id)
+        try:
+            analysis = ai_summarizer.generate_analysis(context, derived.get("headline_metrics"))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    result = textclean.clean(analysis.model_dump())
+    result["team_breakdowns"] = _home_first(result.get("team_breakdowns") or [], context)
+    if _cacheable(context):
         summary_cache.set(cache_key, result)
     return result
+
+
+@app.get("/api/match/{fixture_id}/narrative")
+def match_narrative(request: Request, fixture_id: int, refresh: bool = False):
+    """Both halves merged. Kept for callers that want one payload; the UI uses
+    the two split routes so it can paint as soon as the opening lands."""
+    opening = match_opening(request, fixture_id, refresh)
+    analysis = match_analysis(request, fixture_id, refresh)
+    return {**analysis, **opening}
 
 
 @app.get("/api/match/{fixture_id}/highlights")
@@ -967,8 +1044,24 @@ def match_highlights(fixture_id: int):
     cached = summary_cache.get(cache_key)
     if cached is not None:
         # Clip configuration is re-read every time, so adding footage to
-        # highlights_data.json takes effect without clearing the cache.
-        return {**cached, **highlights.clips_for(fixture_id)}
+        # highlights_data.json takes effect without clearing the cache. The
+        # auto-resolved video is looked up from its own cache, not re-searched.
+        # The search fallback is stamped here too: entries cached before it
+        # existed would otherwise never gain one, and it is what the client
+        # falls back to when a territory-locked embed refuses to play.
+        try:
+            context = api_service.build_match_context(fixture_id)
+            resolved = highlights.auto_map(context, fixture_id)
+            fresh = highlights.clips_for(fixture_id, resolved)
+            sides = (context.get("fixture") or {}).get("teams") or {}
+            fresh["search_url"] = youtube.search_url(
+                (sides.get("home") or {}).get("name") or "",
+                (sides.get("away") or {}).get("name") or "",
+                ((context.get("fixture") or {}).get("fixture") or {}).get("date") or "",
+            )
+        except Exception:
+            fresh = highlights.clips_for(fixture_id, None)
+        return {**cached, **fresh}
 
     try:
         context = api_service.build_match_context(fixture_id)

@@ -680,6 +680,33 @@
     }
 
     /* ===== Highlights ===== */
+    /* Shown when no rights-holder video could be resolved. A link, not a
+       player: YouTube removed search embeds, so an iframe pointed at a search
+       renders "Error 153" — a dead placeholder rather than a way out of one. */
+    .hl-find {
+      display: flex; align-items: center; gap: 0.85rem;
+      padding: 0.9rem 1rem; margin-bottom: 1.1rem;
+      border-radius: 14px; text-decoration: none; color: var(--text);
+      background: linear-gradient(135deg, rgba(255,255,255,0.055), rgba(255,255,255,0.02));
+      border: 1px solid var(--border-bright);
+      transition: border-color 0.16s, transform 0.16s, background 0.16s;
+    }
+    .hl-find:hover {
+      border-color: var(--neon); transform: translateY(-1px);
+      background: linear-gradient(135deg, rgba(55,240,162,0.09), rgba(255,255,255,0.02));
+    }
+    .hl-find-mark {
+      width: 42px; height: 42px; flex-shrink: 0; border-radius: 11px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.07); font-size: 0.9rem;
+      box-shadow: inset 0 0 0 1px var(--border-bright);
+    }
+    .hl-find:hover .hl-find-mark { background: var(--neon); color: #04130b; }
+    .hl-find-text { min-width: 0; }
+    .hl-find-text strong { display: block; font-size: 0.9rem; }
+    .hl-find-text span { font-size: 0.76rem; color: var(--text-dim); }
+    .hl-find-go { margin-left: auto; color: var(--text-dim); flex-shrink: 0; }
+
     .hl-player {
       border-radius: 14px; overflow: hidden; margin-bottom: 1.1rem;
       background: #05070c; border: 1px solid var(--border);
@@ -726,7 +753,10 @@
        upscale never runs away on a wide viewport. An <img>, not a background,
        so a missing photo removes the whole band instead of leaving a gap. */
     .hl-venue {
-      position: relative; margin: 0 0 1.1rem;
+      /* Sits below the reel, never above it. At the top of the panel a wide
+         photograph reads as a video player that failed to load, which is
+         exactly the impression worth avoiding. */
+      position: relative; margin: 1.2rem 0 0;
       aspect-ratio: 12 / 5; max-width: 760px;
       border-radius: 14px; overflow: hidden;
       border: 1px solid var(--border);
@@ -2213,21 +2243,57 @@
         // volume, so it lands first and the panels become usable while the
         // per-player pass is still generating.
         const opts = { signal: controller.signal };
-        const narrativeReq = fetch(`/api/match/${match.fixture_id}/narrative`, opts);
-        const playersReq = fetch(`/api/match/${match.fixture_id}/players`, opts);
+        /* Everything free goes first. The highlights reel and the momentum
+           chart are pure computation over cached data — a millisecond each —
+           so there is no reason for them to wait behind a generation. The
+           panel is populated before the model has written a word. */
+        loadHighlights(match, load);
+        fetch(`/api/match/${match.fixture_id}/derived`, opts)
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => {
+            if (!d || superseded()) return;
+            paintDerived(d, match);
+          })
+          .catch(() => {});
 
-        const nRes = await narrativeReq;
+        /* All three fired at once. The opening is a fraction of the output
+           volume — roughly 470 tokens against 3,700 — so it lands in about ten
+           seconds while the analysis and the per-player pass are still running.
+           The page paints from the top rather than waiting on the whole report. */
+        const openingReq  = fetch(`/api/match/${match.fixture_id}/opening`, opts);
+        const analysisReq = fetch(`/api/match/${match.fixture_id}/analysis`, opts);
+        const playersReq  = fetch(`/api/match/${match.fixture_id}/players`, opts);
+
+        const oRes = await openingReq;
         if (superseded()) return;
-        if (!nRes.ok) throw new Error((await nRes.json().catch(() => ({}))).detail || `Request failed (${nRes.status})`);
-        const narrative = await nRes.json();
+        if (!oRes.ok) throw new Error((await oRes.json().catch(() => ({}))).detail || `Request failed (${oRes.status})`);
+        const opening = await oRes.json();
         if (superseded()) return;
 
         clearInterval(hypeTimer);
         $("summary-loading").hidden = true;
-        renderSummary({ ...narrative, player_notes: [] }, match, load);
+        renderOpening(opening, match, load);
+        setAnalysisLoading(true);
         setMvpLoading(true);
 
-        // Players fill in behind; a failure here must not blank the narrative.
+        analysisReq
+          .then(async (aRes) => {
+            if (superseded()) return;
+            if (!aRes.ok) throw new Error(`analysis ${aRes.status}`);
+            const analysis = await aRes.json();
+            if (superseded()) return;
+            setAnalysisLoading(false);
+            renderAnalysis(analysis, match);
+          })
+          .catch((err) => {
+            if (superseded() || err.name === "AbortError") return;
+            console.warn("analysis failed", err);
+            setAnalysisLoading(false);
+            $("tactical-grid").innerHTML =
+              `<div class="card notice" style="grid-column:1/-1">The deeper analysis is unavailable for this match.</div>`;
+          });
+
+        // Players fill in behind; a failure here must not blank the report.
         playersReq
           .then(async (pRes) => {
             if (superseded()) return;
@@ -2286,12 +2352,145 @@
         <div class="sb-meta">${meta.map((x) => `<span>${x}</span>`).join("")}</div>`;
     }
 
+    /* The second half of the report, rendered when the analysis pass lands.
+       Kept separate from the opening so the page can paint as soon as the
+       headline is ready rather than waiting on ~3,700 tokens of prose. */
+    /* Placeholder while the analysis pass is still running, so the tab reads
+       as "still working" rather than as an empty panel. */
+    function setAnalysisLoading(on) {
+      $("analysis-blocks").innerHTML = on
+        ? `<div class="insight sk-insight"><div class="sk sk-line" style="width:38%"></div>
+             <div class="sk sk-line" style="width:92%"></div>
+             <div class="sk sk-line" style="width:76%"></div></div>`
+        : "";
+      $("tactical-grid").innerHTML = on
+        ? `<div class="card"><div class="sk sk-line" style="width:44%"></div>
+             <div class="sk sk-line" style="width:88%"></div>
+             <div class="sk sk-line" style="width:70%"></div></div>
+           <div class="card"><div class="sk sk-line" style="width:40%"></div>
+             <div class="sk sk-line" style="width:84%"></div>
+             <div class="sk sk-line" style="width:66%"></div></div>`
+        : "";
+    }
+
+    function renderAnalysis(data, match) {
+      /* The analytical reads — what settled it, what the numbers hide, what
+         changed after the bench. Each is omitted when absent rather than shown
+         empty, so summaries cached before these existed still render cleanly. */
+      const insight = (label, body, mark) => body
+        ? `<div class="insight">
+             <div class="in-label">${mark} ${esc(label)}</div>
+             <div class="in-body">${esc(body)}</div>
+           </div>`
+        : "";
+      const shifts = data.tactical_shifts || [];
+      $("analysis-blocks").innerHTML =
+        insight("What decided it", data.decisive_factor, "🎯") +
+        insight("The number that misleads", data.misleading_stat, "🔍") +
+        (shifts.length
+          ? `<div class="insight">
+               <div class="in-label">🔄 After the changes</div>
+               <ul class="takeaways compact">${shifts.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+             </div>`
+          : "");
+
+      /* ---- ⚔️ Tactical breakdown: verdict → bullets → stats → prose ---- */
+      $("tactical-grid").innerHTML = data.team_breakdowns.map((t, i) => {
+        const color = teamColorFor(t.team_name, match);
+        const bars = [], chips = [];
+        for (const s of t.key_stats || []) {
+          const pct = s.match(/(\d{1,3}(?:\.\d+)?)\s?%/);
+          if (pct && +pct[1] <= 100) bars.push({ label: s, value: +pct[1] });
+          else chips.push(s);
+        }
+        const bullets = t.bullets || [];
+        return `
+          <div class="card team-card" style="--c:${esc(color)};--accent-mark:${esc(color)}">
+            <h3><span class="swatch"></span>${esc(t.team_name)}</h3>
+            ${t.verdict ? `<span class="verdict-tag">${esc(t.verdict)}</span>` : ""}
+            ${bullets.length
+              ? `<ul class="takeaways compact">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>`
+              : `<p>${esc(t.narrative)}</p>`}
+            ${bars.map((b) => `
+              <div class="stat-row">
+                <div class="stat-label"><span>${esc(b.label)}</span><span>${b.value}%</span></div>
+                <div class="stat-track"><div class="stat-fill" data-w="${b.value}"></div></div>
+              </div>`).join("")}
+            ${chips.length ? `<div class="chip-row">${chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}</div>` : ""}
+            ${t.manager_takeaway ? `
+              <div class="mgr-read">
+                <span class="mgr-label">Manager's read</span>
+                ${esc(t.manager_takeaway)}
+              </div>` : ""}
+            ${bullets.length ? `
+              <button class="prose-toggle" data-prose="prose-${i}">▾ Full analysis</button>
+              <div class="prose-body" id="prose-${i}" hidden>${esc(t.narrative)}</div>` : ""}
+          </div>`;
+      }).join("");
+
+      // Prose toggles belong to the cards just written, so they are wired here.
+      document.querySelectorAll("[data-prose]").forEach((btn) => {
+        btn.onclick = () => {
+          const body = $(btn.dataset.prose);
+          const open = !body.hidden;
+          body.hidden = open;
+          btn.textContent = (open ? "▾ " : "▴ ") + "Full analysis";
+        };
+      });
+      requestAnimationFrame(() => requestAnimationFrame(() =>
+        document.querySelectorAll(".stat-fill").forEach((f) => (f.style.width = f.dataset.w + "%"))
+      ));
+    }
+
     /* ============================ Highlights ============================ */
 
     const MOMENT_ICON = {
       goal: "⚽", penalty: "🎯", own_goal: "🙃",
       miss: "❌", red_card: "🟥", var_overturn: "⊘",
     };
+
+    /* Loads YouTube's IFrame API once, on demand. Nothing from YouTube is
+       fetched until a viewer actually presses play. */
+    let ytApiReady = null;
+    function youtubeApi() {
+      if (ytApiReady) return ytApiReady;
+      ytApiReady = new Promise((resolve) => {
+        if (window.YT && window.YT.Player) return resolve(window.YT);
+        window.onYouTubeIframeAPIReady = () => resolve(window.YT);
+        const tag = document.createElement("script");
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+      });
+      return ytApiReady;
+    }
+
+    function highlightsFallback(searchUrl) {
+      return `<a class="hl-find" href="${esc(searchUrl || "https://www.youtube.com")}"
+                 target="_blank" rel="noopener noreferrer">
+                <span class="hl-find-mark">▶</span>
+                <span class="hl-find-text">
+                  <strong>Watch the official highlights on YouTube</strong>
+                  <span>The rights holder does not allow playback here — highlights are licensed by territory</span>
+                </span>
+                <span class="hl-find-go">↗</span>
+              </a>`;
+    }
+
+    async function mountYouTube(box, videoId, searchUrl) {
+      const host = document.createElement("div");
+      box.querySelector(".hl-yt-face").replaceWith(host);
+      const YT = await youtubeApi();
+      new YT.Player(host, {
+        videoId,
+        playerVars: { rel: 0, modestbranding: 1, autoplay: 1, playsinline: 1 },
+        events: {
+          // 2 bad id · 5 html5 · 100 removed · 101/150 embedding or territory refused
+          onError: () => {
+            box.outerHTML = highlightsFallback(searchUrl);
+          },
+        },
+      });
+    }
 
     async function loadHighlights(match, load) {
       const superseded = () => load && activeLoad !== load;
@@ -2337,6 +2536,15 @@
                ${yt.channel ? ` · <strong>${esc(yt.channel)}</strong> on YouTube` : ""}
              </div>
            </div>`
+        : data.search_url
+        ? `<a class="hl-find" href="${esc(data.search_url)}" target="_blank" rel="noopener noreferrer">
+             <span class="hl-find-mark">▶</span>
+             <span class="hl-find-text">
+               <strong>Find the official highlights</strong>
+               <span>No rights-holder upload is mapped for this match — search YouTube</span>
+             </span>
+             <span class="hl-find-go">↗</span>
+           </a>`
         : clips.length
         ? `<div class="hl-player">
              <video id="hl-video" controls preload="metadata"
@@ -2409,21 +2617,28 @@
            </div>`
         : "";
 
-      $("highlights-body").innerHTML =
-        venueBand + player + reel + shootout +
-        `<p class="hl-provenance">${esc(data.provenance || "")}</p>`;
+      /* With a real player on screen the provenance note is redundant — the
+         channel credit sits under the video and says where it came from. The
+         note exists to stop a player portrait being mistaken for a photograph
+         of the goal, which only matters when there is no video. */
+      const provenance = data.has_video
+        ? ""
+        : `<p class="hl-provenance">${esc(data.provenance || "")}</p>`;
 
-      // Swap the facade for the real embed on first click.
+      $("highlights-body").innerHTML =
+        player + reel + shootout + venueBand + provenance;
+
+      /* Mounted through YouTube's IFrame API rather than as a bare iframe, so
+         a refusal is detectable. Rights are territorial — NBC's Premier League
+         uploads are US-only, Sky's are UK-only — so a perfectly valid video id
+         still renders "not available in your country" for half the world. When
+         that happens the player is replaced by the search card, which is the
+         only way "every match has a working player or a working way to the
+         video" can actually hold. */
       const ytBox = $("hl-yt");
       if (ytBox) {
         ytBox.querySelector(".hl-yt-face").addEventListener("click", () => {
-          const frame = document.createElement("iframe");
-          frame.src = ytBox.dataset.embed + "&autoplay=1";
-          frame.title = "Match highlights";
-          frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
-          frame.allowFullscreen = true;
-          frame.referrerPolicy = "strict-origin-when-cross-origin";
-          ytBox.querySelector(".hl-yt-face").replaceWith(frame);
+          mountYouTube(ytBox, data.youtube.id, data.search_url);
         }, { once: true });
       }
 
@@ -2440,7 +2655,36 @@
       }
     }
 
-    function renderSummary(data, match, load) {
+    /* Stat tiles and the momentum chart. Split out because they cost nothing
+       to compute and should never wait on the model. */
+    function paintDerived(data, match) {
+      const metrics = data.headline_metrics || [];
+      $("callout-row").innerHTML = metrics.map((m) => {
+        const homeLeads = m.leader === "home";
+        const evenSplit = m.leader === "even";
+        return `
+          <div class="callout">
+            <div class="cl-label">${esc(m.label)}</div>
+            <div class="cl-values">
+              <span class="cl-v ${homeLeads || evenSplit ? "" : "dim"}"
+                    style="${homeLeads ? `color:${esc(match.home.color)}` : ""}">${esc(m.home)}</span>
+              <span class="cl-v ${!homeLeads || evenSplit ? "" : "dim"}"
+                    style="${m.leader === "away" ? `color:${esc(match.away.color)}` : ""}">${esc(m.away)}</span>
+            </div>
+            <div class="cl-split">
+              <span data-w="${(m.share * 100).toFixed(1)}" style="background:${esc(match.home.color)}"></span>
+              <span data-w="${(100 - m.share * 100).toFixed(1)}" style="background:${esc(match.away.color)}"></span>
+            </div>
+          </div>`;
+      }).join("");
+      renderMomentum(data.momentum, match);
+      $("summary-content").hidden = false;
+      requestAnimationFrame(() => requestAnimationFrame(() =>
+        document.querySelectorAll(".cl-split span").forEach((s) => (s.style.width = s.dataset.w + "%"))
+      ));
+    }
+
+    function renderOpening(data, match, load) {
       /* ---- ⚡ Shockwave: hook → stat badges → bullets → optional prose ---- */
       const headline = $("match-headline");
       if (data.headline) {
@@ -2475,26 +2719,6 @@
       $("momentum-takeaways").innerHTML =
         takeaways.map((t) => `<li>${esc(t)}</li>`).join("");
 
-      /* The analytical reads — what settled it, what the numbers hide, what
-         changed after the bench. Each is omitted when absent rather than shown
-         empty, so summaries cached before these existed still render cleanly. */
-      const insight = (label, body, mark) => body
-        ? `<div class="insight">
-             <div class="in-label">${mark} ${esc(label)}</div>
-             <div class="in-body">${esc(body)}</div>
-           </div>`
-        : "";
-      const shifts = data.tactical_shifts || [];
-      $("analysis-blocks").innerHTML =
-        insight("What decided it", data.decisive_factor, "🎯") +
-        insight("The number that misleads", data.misleading_stat, "🔍") +
-        (shifts.length
-          ? `<div class="insight">
-               <div class="in-label">🔄 After the changes</div>
-               <ul class="takeaways compact">${shifts.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
-             </div>`
-          : "");
-
       // Full prose is kept, but folded away so the panel opens scannable.
       const tldrBody = $("tldr-text");
       const tldrToggle = $("tldr-toggle");
@@ -2509,47 +2733,8 @@
         tldrToggle.hidden = true;
       }
 
-      /* ---- ⚔️ Tactical breakdown: verdict → bullets → stats → prose ---- */
-      $("tactical-grid").innerHTML = data.team_breakdowns.map((t, i) => {
-        const color = teamColorFor(t.team_name, match);
-        const bars = [], chips = [];
-        for (const s of t.key_stats || []) {
-          const pct = s.match(/(\d{1,3}(?:\.\d+)?)\s?%/);
-          if (pct && +pct[1] <= 100) bars.push({ label: s, value: +pct[1] });
-          else chips.push(s);
-        }
-        const bullets = t.bullets || [];
-        return `
-          <div class="card team-card" style="--c:${esc(color)};--accent-mark:${esc(color)}">
-            <h3><span class="swatch"></span>${esc(t.team_name)}</h3>
-            ${t.verdict ? `<span class="verdict-tag">${esc(t.verdict)}</span>` : ""}
-            ${bullets.length
-              ? `<ul class="takeaways compact">${bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>`
-              : `<p>${esc(t.narrative)}</p>`}
-            ${bars.map((b) => `
-              <div class="stat-row">
-                <div class="stat-label"><span>${esc(b.label)}</span><span>${b.value}%</span></div>
-                <div class="stat-track"><div class="stat-fill" data-w="${b.value}"></div></div>
-              </div>`).join("")}
-            ${chips.length ? `<div class="chip-row">${chips.map((c) => `<span class="chip">${esc(c)}</span>`).join("")}</div>` : ""}
-            ${t.manager_takeaway ? `
-              <div class="mgr-read">
-                <span class="mgr-label">Manager's read</span>
-                ${esc(t.manager_takeaway)}
-              </div>` : ""}
-            ${bullets.length ? `
-              <button class="prose-toggle" data-prose="prose-${i}">▾ Full analysis</button>
-              <div class="prose-body" id="prose-${i}" hidden>${esc(t.narrative)}</div>` : ""}
-          </div>`;
-      }).join("");
-
-      renderPlayerCards(data.player_notes || [], match);
-
       // 📈 Momentum pulse
       renderMomentum(data.momentum, match);
-
-      // Free and unmetered, so it can load alongside rather than on tab click.
-      loadHighlights(match, load);
 
       $("summary-content").hidden = false;
 

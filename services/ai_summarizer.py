@@ -65,6 +65,28 @@ class MatchSummary(BaseModel):
     player_notes: list[PlayerNote]        # Layer 3 — notable performers
 
 
+class MatchOpening(BaseModel):
+    """The hook: what a reader needs within a couple of breaths.
+
+    Split from the rest because latency here is bounded by how much text the
+    model has to produce, not by how hard it thinks. The full narrative emits
+    ~3,700 tokens and takes about a minute no matter how the prompt is shaped;
+    this emits ~470 and lands in ten seconds. Running the two in parallel means
+    the page has something real on it almost immediately.
+    """
+    headline: str
+    tldr: str
+    momentum_takeaways: list[str]
+
+
+class MatchAnalysis(BaseModel):
+    """The deeper read, filled in behind the opening."""
+    decisive_factor: str
+    misleading_stat: str
+    tactical_shifts: list[str]
+    team_breakdowns: list[TeamBreakdown]
+
+
 class MatchNarrative(BaseModel):
     """The Shockwave + Tactical halves — everything except player notes.
 
@@ -221,12 +243,42 @@ def generate_prematch_dossier(context: dict[str, Any]) -> PreMatchDossier:
 
 
 def _strip_players(match_context: dict[str, Any]) -> dict[str, Any]:
-    """Drop the per-player rows — ~14k of the ~39k input tokens.
+    """Build the leanest context the narrative pass actually reasons over.
 
-    The narrative pass reasons about the match, not individuals, so sending
-    every player's stat line only slows it down.
+    This used to drop only the top-level `player_statistics` key, which looked
+    right and wasn't: the provider also nests the whole per-player block inside
+    `fixture.players`, and that alone was 30k of a 53k payload. `events` and
+    `statistics` were each being sent twice as well, once at the top level and
+    again inside `fixture`.
+
+    So the pass was reading ~25k tokens to write ~500. Latency here is bounded
+    by input, not output — an opening pass producing 486 tokens still took 13s
+    against the full context. Sending only what the pass uses cuts the payload
+    by about 80%.
+
+    Formations are kept because the tactical fields reason about shape; the
+    lineups themselves are not, since individual players are the other pass's
+    job.
     """
-    return {k: v for k, v in match_context.items() if k != "player_statistics"}
+    fixture = match_context.get("fixture") or {}
+    lineups = fixture.get("lineups") or []
+
+    return {
+        "fixture": {
+            key: fixture.get(key)
+            for key in ("fixture", "league", "teams", "goals", "score")
+            if fixture.get(key) is not None
+        },
+        "formations": [
+            {"team": (side.get("team") or {}).get("name"),
+             "formation": side.get("formation")}
+            for side in lineups if side.get("formation")
+        ],
+        # Deliberately from the top level, and only once.
+        "events": match_context.get("events") or fixture.get("events") or [],
+        "team_statistics": (match_context.get("team_statistics")
+                            or fixture.get("statistics") or []),
+    }
 
 
 def _displayed_metrics(headline_metrics: Optional[list[dict[str, Any]]]) -> str:
@@ -249,6 +301,79 @@ def _displayed_metrics(headline_metrics: Optional[list[dict[str, Any]]]) -> str:
         "refer to one only when you are adding something it does not say — what "
         "it caused, what it conceals, or how it changed within the match.\n"
     )
+
+
+def _call(output_format: Any, instruction: str, match_context: dict[str, Any],
+          headline_metrics: Optional[list[dict[str, Any]]], max_tokens: int) -> Any:
+    """One structured pass over the lean match context."""
+    response = _client().messages.parse(
+        model=MODEL,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": SYSTEM_PROMPT,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{
+            "role": "user",
+            "content": (instruction + _displayed_metrics(headline_metrics) +
+                        f"\nMatch data:\n{json.dumps(_strip_players(match_context), ensure_ascii=False)}"),
+        }],
+        output_format=output_format,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to summarize this match data.")
+    if response.parsed_output is None:
+        raise RuntimeError("Failed to parse the model response.")
+    return response.parsed_output
+
+
+_OPENING_PROMPT = (
+    "Write the opening of a match report for a scannable dashboard.\n\n"
+    "The reader can already see the scoreline and the headline statistics. "
+    "Explain the match, don't report it.\n"
+    "- headline: 6-10 words, the match in one punchy line.\n"
+    "- tldr: 2-3 sentences on what happened and why. No stat dump.\n"
+    "- momentum_takeaways: 3-4 bullets tracing how control moved, each naming "
+    "the minute or passage that caused the swing.\n\n"
+    "Write only these three fields, and keep them tight."
+)
+
+_ANALYSIS_PROMPT = (
+    "Write the analytical half of a match report. The headline, summary and "
+    "momentum bullets are being written separately — do not repeat them.\n\n"
+    "- decisive_factor: the one thing that actually settled it — a tactical "
+    "mismatch, a passage of play, a substitution, an individual. Name it and "
+    "say why it was decisive.\n"
+    "- misleading_stat: a headline number that misreads this game, and what "
+    "the data shows was really going on. If every number genuinely reflects "
+    "the match, say so plainly instead of manufacturing a contradiction.\n"
+    "- tactical_shifts: 2-4 bullets on what changed after the substitutions or "
+    "at the break, tied to the minute. Fewer bullets if the data shows no shift.\n"
+    "- team_breakdowns: one per team. `verdict` is 3-6 words; `bullets` are 3-4 "
+    "concrete takeaways under ~14 words; `narrative` is the fuller prose; "
+    "`manager_takeaway` is one sentence on what this result tells that manager "
+    "about their side.\n\n"
+    "Never repeat a number in more than one place."
+)
+
+
+def generate_opening(match_context: dict[str, Any],
+                     headline_metrics: Optional[list[dict[str, Any]]] = None) -> MatchOpening:
+    """The fast pass — headline, summary and momentum bullets."""
+    opening = _call(MatchOpening, _OPENING_PROMPT, match_context, headline_metrics, 2000)
+    if not (opening.headline and opening.tldr):
+        raise RuntimeError("The model returned an empty opening for this match.")
+    return opening
+
+
+def generate_analysis(match_context: dict[str, Any],
+                      headline_metrics: Optional[list[dict[str, Any]]] = None) -> MatchAnalysis:
+    """The slower pass — the analytical reads and both team breakdowns."""
+    for attempt in (1, 2):
+        analysis = _call(MatchAnalysis, _ANALYSIS_PROMPT, match_context, headline_metrics, 8000)
+        if analysis.team_breakdowns:
+            return analysis
+        logger.warning("Analysis attempt %d came back without team breakdowns; %s",
+                       attempt, "retrying" if attempt == 1 else "giving up")
+    raise RuntimeError("The model returned an incomplete analysis for this match.")
 
 
 def _is_complete(narrative: MatchNarrative) -> bool:
