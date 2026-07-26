@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Fallback emblem for a competition the provider holds no artwork for.
+
+    A generic tournament trophy, deliberately not a likeness of the FIFA World
+    Cup Trophy: that sculpture is a protected design, and redrawing it would
+    put a replica of someone else's mark in our own asset directory. A clean
+    gold cup reads as "tournament" instantly and sits beside the real UEFA and
+    domestic-cup badges without looking like a placeholder.
+
+    Vector rather than raster, so it stays sharp at any zoom and at the 20px it
+    renders at inside a competition chip.
+  -->
+  <defs>
+    <linearGradient id="gold" x1="0.15" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#F8E29C"/>
+      <stop offset="0.35" stop-color="#E3B948"/>
+      <stop offset="0.7" stop-color="#C28F22"/>
+      <stop offset="1" stop-color="#9A6D14"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Handles, drawn behind the bowl so they read as attached to it. -->
+  <g fill="none" stroke="url(#gold)" stroke-width="3.6" stroke-linecap="round">
+    <path d="M17 15H11a5 5 0 0 0-5 5c0 6 4.6 10.4 11 11.2"/>
+    <path d="M47 15h6a5 5 0 0 1 5 5c0 6-4.6 10.4-11 11.2"/>
+  </g>
+
+  <!-- Bowl: straight shoulders falling into a rounded base. -->
+  <path d="M16 8h32v14.5C48 32.8 41.3 40 32 40s-16-7.2-16-17.5V8z" fill="url(#gold)"/>
+
+  <!-- A single rim highlight keeps it from reading as a flat blob at 20px. -->
+  <path d="M16 8h32v3.4H16z" fill="#FBEFC4" opacity="0.85"/>
+
+  <!-- Stem and plinth. -->
+  <path d="M29 39.5h6v7.5h-6z" fill="url(#gold)"/>
+  <path d="M22.5 47h19l1.5 6h-22z" fill="url(#gold)"/>
+  <rect x="17.5" y="53" width="29" height="5" rx="1.8" fill="url(#gold)"/>
+</svg>

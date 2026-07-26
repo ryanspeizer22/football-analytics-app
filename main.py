@@ -611,6 +611,7 @@ def team_crest(team_id: int):
 # competitions it holds no artwork for — the World Cup among them. It arrives
 # as a normal 200 with a valid PNG, so only the content identifies it.
 _PLACEHOLDER_LOGO_MD5 = "3617b8094f9ea8c81f6d0beff671978b"
+_TROPHY_EMBLEM = Path("static/trophy-emblem.svg")
 
 
 @app.get("/api/competition-logo/{league_id}")
@@ -625,14 +626,12 @@ def competition_logo(league_id: int):
         response = _serve_media("leagues", league_id, "Competition")
         if hashlib.md5(response.body).hexdigest() != _PLACEHOLDER_LOGO_MD5:
             return response
-        logger.info("Provider has no artwork for competition %s; using emblem", league_id)
+        logger.info("Provider has no artwork for competition %s; using trophy", league_id)
     except HTTPException:
-        logger.info("Competition logo unavailable for %s; using emblem", league_id)
+        logger.info("Competition logo unavailable for %s; using trophy", league_id)
 
-    comp = competitions.get_competition(league_id)
-    short = (comp or {}).get("short") or str(league_id)
-    return Response(og_image.competition_emblem(short),
-                    media_type="image/png", headers=_MEDIA_HEADERS)
+    return Response(_TROPHY_EMBLEM.read_bytes(),
+                    media_type="image/svg+xml", headers=_MEDIA_HEADERS)
 
 
 @app.get("/api/fixtures/upcoming")

@@ -190,42 +190,6 @@ def compare_card(a_name: str, a_rating, a_team: str,
     return _png(img)
 
 
-def competition_emblem(short: str, size: int = 150) -> bytes:
-    """A neutral typographic badge for a competition with no official artwork.
-
-    The provider serves a grey placeholder shield for some competitions (the
-    World Cup among them). Falling back to the country flag would be worse than
-    useless for a domestic league — England, Spain and Italy each run several
-    of the competitions here — so the fallback is the competition's own short
-    code on a plain roundel: unmistakably a stand-in, and never the wrong
-    country's identity.
-    """
-    scale = 4  # draw oversized and downsample, so the edges stay smooth
-    canvas = size * scale
-    image = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-
-    # Drawn dark-on-transparent to match the real federation marks, most of
-    # which are dark artwork on a transparent field and are shown on a light
-    # plate in the UI. A light-on-dark emblem would invert against them.
-    ink = (26, 33, 48, 255)
-    inset = canvas // 14
-    draw.ellipse([inset, inset, canvas - inset, canvas - inset],
-                 outline=ink, width=scale * 3)
-
-    label = (short or "?").upper()[:4]
-    font = _font(int(canvas * (0.36 if len(label) <= 2 else 0.23)))
-    left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
-    draw.text(((canvas - (right - left)) / 2 - left,
-               (canvas - (bottom - top)) / 2 - top),
-              label, font=font, fill=ink)
-
-    image = image.resize((size, size), Image.LANCZOS)
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
 def generic_card(title: str, subtitle: str = "") -> bytes:
     img = _backdrop()
     draw = ImageDraw.Draw(img)
