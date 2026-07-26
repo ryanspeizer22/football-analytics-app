@@ -628,8 +628,11 @@
       width: 82%; height: 82%; object-fit: contain; display: block;
       position: relative; z-index: 1;   /* sits over the initials when it loads */
     }
-    /* Only ever seen when the badge above it fails or is absent. */
-    .crest-fallback {
+    /* Shown only once the badge has actually failed — see crest(). Hidden by
+       default rather than layered behind, because a transparent crest would
+       otherwise let the letters read through it. */
+    .crest-fallback { display: none; }
+    .crest.no-crest .crest-fallback {
       position: absolute; inset: 0; display: flex;
       align-items: center; justify-content: center;
       font-style: normal; font-weight: 800;
@@ -683,6 +686,38 @@
     }
     .hl-player video { width: 100%; display: block; aspect-ratio: 16 / 9; background: #05070c; }
     .hl-credit { padding: 0.5rem 0.8rem; font-size: 0.7rem; color: var(--text-dim); }
+    .hl-credit strong { color: var(--text); font-weight: 650; }
+
+    /* YouTube facade: poster + play button until clicked, then the iframe. */
+    .hl-yt iframe { width: 100%; display: block; aspect-ratio: 16 / 9; border: 0; }
+    .hl-yt-face {
+      position: relative; display: block; width: 100%; padding: 0;
+      aspect-ratio: 16 / 9; border: 0; cursor: pointer; overflow: hidden;
+      background: #05070c;
+    }
+    .hl-yt-face img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      transition: transform 0.35s ease, filter 0.25s ease;
+      filter: brightness(0.86);
+    }
+    .hl-yt-face:hover img { transform: scale(1.03); filter: brightness(1); }
+    .hl-yt-play {
+      position: absolute; inset: 0; margin: auto;
+      width: 68px; height: 48px; border-radius: 12px;
+      background: rgba(12, 16, 25, 0.82);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.18), 0 10px 30px rgba(0,0,0,0.5);
+      transition: background 0.2s, transform 0.2s;
+    }
+    .hl-yt-play::after {
+      content: ""; position: absolute; inset: 0; margin: auto;
+      width: 0; height: 0;
+      border-left: 17px solid var(--text);
+      border-top: 10px solid transparent; border-bottom: 10px solid transparent;
+      transform: translateX(3px);
+    }
+    .hl-yt-face:hover .hl-yt-play { background: var(--neon); transform: scale(1.06); }
+    .hl-yt-face:hover .hl-yt-play::after { border-left-color: #04130b; }
+    .hl-yt-face:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
 
     /* Real photograph of the ground, dimmed so the caption stays legible. */
     .hl-venue {
@@ -1749,14 +1784,19 @@
       const color = esc(team?.color || "#7c869c");
       const id = team?.id;
       const initials = esc(clubInitials(team?.name || team?.full_name));
+      /* The monogram is hidden unless the badge actually fails. It used to sit
+         behind the image and rely on stacking, which does not work: club
+         crests are mostly transparent — Tottenham's cockerel is 65% alpha — so
+         the letters showed straight through the badge that had loaded fine.
+         The image marks its own failure, and only then is the monogram shown. */
       const img = id
         ? `<img src="/api/crest/${encodeURIComponent(id)}?v=${ASSET_V}" alt="" loading="eager"
-             onerror="this.remove()">`
+             onerror="this.closest('.crest').classList.add('no-crest'); this.remove()">`
         : "";
-      /* aria-hidden on the initials: they are a visual stand-in sitting behind
-         the badge, and the club's name is already in the adjacent text. Without
-         it a screen reader announces "RM BA Real Madrid vs Barcelona". */
-      return `<span class="crest ${cls}" style="--c:${color}"
+      /* aria-hidden on the initials: they are a visual stand-in for the badge,
+         and the club's name is already in the adjacent text. Without it a
+         screen reader announces "RM BA Real Madrid vs Barcelona". */
+      return `<span class="crest ${cls}${id ? "" : " no-crest"}" style="--c:${color}"
                     title="${esc(team?.full_name || team?.name || "")}">
                 <i class="crest-fallback" aria-hidden="true">${initials}</i>${img}</span>`;
     }
@@ -2068,7 +2108,55 @@
     ];
     let hypeTimer = null;
 
+    /* One match load at a time. Switching fixtures used to leave the previous
+       one's requests in flight, and their callbacks wrote into the new match's
+       panels when they landed — player cards from the match you just left,
+       appearing under the scoreboard of the one you just opened. Each load
+       claims this token; anything that finds itself superseded aborts its
+       fetches and drops its results on the floor. */
+    let activeLoad = null;
+
+    /* Every element a previous match wrote into. Cleared synchronously before
+       the new load starts, so nothing from the old fixture is ever on screen
+       next to the new one — not even for the moment before its data arrives. */
+    function resetMatchPanels() {
+      $("match-headline").hidden = true;
+      $("match-headline").innerHTML = "";
+      $("callout-row").innerHTML = "";
+      $("momentum-takeaways").innerHTML = "";
+      $("analysis-blocks").innerHTML = "";
+      $("tldr-text").textContent = "";
+      $("tldr-text").hidden = true;
+      $("tldr-toggle").hidden = true;
+      $("tactical-grid").innerHTML = "";
+      $("mvp-grid").innerHTML = "";
+      $("moment-list").innerHTML = "";
+      $("momentum-legend").innerHTML = "";
+      $("momentum-caption").textContent = "";
+      $("momentum-card").hidden = true;
+      $("momentum-wrap").querySelectorAll("svg").forEach((n) => n.remove());
+      $("highlights-body").innerHTML = "";
+      // Always return to the first tab: panel state is per-match too.
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      document.querySelector('[data-panel="panel-shockwave"]').classList.add("active");
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+      $("panel-shockwave").classList.add("active");
+    }
+
     async function loadSummary(match) {
+      if (activeLoad) activeLoad.controller.abort();
+      const controller = new AbortController();
+      const load = { fixtureId: match.fixture_id, controller };
+      activeLoad = load;
+      const superseded = () => activeLoad !== load;
+
+      resetMatchPanels();
+      // The tab title is per-match state too. Server-rendered on a deep link,
+      // but client-side navigation left the previous fixture's title in place.
+      const played = match.home.score !== null && match.home.score !== undefined;
+      document.title = played
+        ? `${match.home.name} ${match.home.score}–${match.away.score} ${match.away.name} — PitchSense`
+        : `${match.home.name} v ${match.away.name} — PitchSense`;
       setRoute(currentMatchSlug(match));
       setAmbient(match);
       renderScoreboard(match);
@@ -2092,38 +2180,48 @@
         // Two-phase load. The narrative half is a fraction of the output
         // volume, so it lands first and the panels become usable while the
         // per-player pass is still generating.
-        const narrativeReq = fetch(`/api/match/${match.fixture_id}/narrative`);
-        const playersReq = fetch(`/api/match/${match.fixture_id}/players`);
+        const opts = { signal: controller.signal };
+        const narrativeReq = fetch(`/api/match/${match.fixture_id}/narrative`, opts);
+        const playersReq = fetch(`/api/match/${match.fixture_id}/players`, opts);
 
         const nRes = await narrativeReq;
+        if (superseded()) return;
         if (!nRes.ok) throw new Error((await nRes.json().catch(() => ({}))).detail || `Request failed (${nRes.status})`);
         const narrative = await nRes.json();
+        if (superseded()) return;
 
         clearInterval(hypeTimer);
         $("summary-loading").hidden = true;
-        renderSummary({ ...narrative, player_notes: [] }, match);
+        renderSummary({ ...narrative, player_notes: [] }, match, load);
         setMvpLoading(true);
 
         // Players fill in behind; a failure here must not blank the narrative.
         playersReq
           .then(async (pRes) => {
+            if (superseded()) return;
             if (!pRes.ok) throw new Error(`players ${pRes.status}`);
             const players = await pRes.json();
+            if (superseded()) return;
             renderPlayerCards(players.player_notes || [], match);
           })
           .catch((err) => {
+            if (superseded() || err.name === "AbortError") return;
             console.warn("player notes failed", err);
             $("mvp-grid").innerHTML =
               `<div class="card notice" style="grid-column:1/-1">Player notes unavailable for this match.</div>`;
           });
         return;
       } catch (err) {
+        // A superseded load is not a failure — the user simply moved on.
+        if (superseded() || err.name === "AbortError") return;
         $("summary-error").textContent = err.message;
         $("summary-error").hidden = false;
         $("scoreboard").hidden = true;
       } finally {
-        clearInterval(hypeTimer);
-        $("summary-loading").hidden = true;
+        if (!superseded()) {
+          clearInterval(hypeTimer);
+          $("summary-loading").hidden = true;
+        }
       }
     }
 
@@ -2163,15 +2261,20 @@
       miss: "❌", red_card: "🟥", var: "📺",
     };
 
-    async function loadHighlights(match) {
+    async function loadHighlights(match, load) {
+      const superseded = () => load && activeLoad !== load;
       const body = $("highlights-body");
       body.innerHTML = `<div class="hl-empty">Loading key moments…</div>`;
       try {
-        const res = await fetch(`/api/match/${match.fixture_id}/highlights`);
+        const res = await fetch(`/api/match/${match.fixture_id}/highlights`,
+                                load ? { signal: load.controller.signal } : {});
+        if (superseded()) return;
         const data = await res.json();
+        if (superseded()) return;
         if (!res.ok) throw new Error(data.detail || "Highlights unavailable");
         renderHighlights(data, match);
       } catch (err) {
+        if (superseded() || err.name === "AbortError") return;
         body.innerHTML = `<div class="hl-empty">${esc(err.message)}</div>`;
       }
     }
@@ -2184,7 +2287,25 @@
       /* Video renders only when a licensed source is configured. Match footage
          belongs to whoever filmed it, so nothing ships with the app. Absent a
          clip, the panel leads with the photo reel rather than an apology. */
-      const player = clips.length
+      /* YouTube plays in-page via the official embed. Rendered as a facade —
+         poster plus play button — and the iframe is only inserted on click, so
+         the page never loads YouTube's scripts or sets its cookies for someone
+         who doesn't press play. The poster is proxied through our own origin
+         like the rest of the media. */
+      const yt = data.youtube;
+      const player = yt
+        ? `<div class="hl-player hl-yt" id="hl-yt" data-embed="${esc(yt.embed)}">
+             <button class="hl-yt-face" type="button"
+                     aria-label="Play highlights${yt.channel ? " from " + esc(yt.channel) : ""}">
+               <img src="${esc(yt.thumb)}" alt="" loading="eager" onerror="this.remove()">
+               <span class="hl-yt-play" aria-hidden="true"></span>
+             </button>
+             <div class="hl-credit">
+               ${yt.title ? esc(yt.title) : "Match highlights"}
+               ${yt.channel ? ` · <strong>${esc(yt.channel)}</strong> on YouTube` : ""}
+             </div>
+           </div>`
+        : clips.length
         ? `<div class="hl-player">
              <video id="hl-video" controls preload="metadata"
                     ${data.poster ? `poster="${esc(data.poster)}"` : ""}
@@ -2257,7 +2378,21 @@
         venueBand + player + reel + shootout +
         `<p class="hl-provenance">${esc(data.provenance || "")}</p>`;
 
-      // With video present, a moment carrying a timestamp seeks the player.
+      // Swap the facade for the real embed on first click.
+      const ytBox = $("hl-yt");
+      if (ytBox) {
+        ytBox.querySelector(".hl-yt-face").addEventListener("click", () => {
+          const frame = document.createElement("iframe");
+          frame.src = ytBox.dataset.embed + "&autoplay=1";
+          frame.title = "Match highlights";
+          frame.allow = "accelerometer; autoplay; encrypted-media; picture-in-picture";
+          frame.allowFullscreen = true;
+          frame.referrerPolicy = "strict-origin-when-cross-origin";
+          ytBox.querySelector(".hl-yt-face").replaceWith(frame);
+        }, { once: true });
+      }
+
+      // With a self-hosted clip, a moment carrying a timestamp seeks the player.
       const video = $("hl-video");
       if (video) {
         $("highlights-body").querySelectorAll("[data-seek]").forEach((el) => {
@@ -2270,7 +2405,7 @@
       }
     }
 
-    function renderSummary(data, match) {
+    function renderSummary(data, match, load) {
       /* ---- ⚡ Shockwave: hook → stat badges → bullets → optional prose ---- */
       const headline = $("match-headline");
       if (data.headline) {
@@ -2379,7 +2514,7 @@
       renderMomentum(data.momentum, match);
 
       // Free and unmetered, so it can load alongside rather than on tab click.
-      loadHighlights(match);
+      loadHighlights(match, load);
 
       $("summary-content").hidden = false;
 
@@ -2735,9 +2870,17 @@
 
     /* A match opened from a shared link has no card object to hand around, so
        rebuild the minimum the renderers need from the server's own metadata. */
+    /* Tracks the most recent open request. The metadata fetch happens before
+       loadSummary claims its token, so without this a slow meta response for a
+       match you have already navigated away from would call loadSummary late —
+       aborting the newer load and dropping you back on the previous fixture. */
+    let pendingOpenId = null;
+
     async function openMatchById(fixtureId) {
+      pendingOpenId = fixtureId;
       try {
         const meta = await (await fetch(`/api/match/${fixtureId}/meta`)).json();
+        if (pendingOpenId !== fixtureId) return;
         await loadSummary({
           fixture_id: fixtureId,
           date: meta.date,
@@ -2750,7 +2893,7 @@
                   color: meta.away_color, short: meta.away_short || "" },
         });
       } catch {
-        showView("home", false);
+        if (pendingOpenId === fixtureId) showView("home", false);
       }
     }
 

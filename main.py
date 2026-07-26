@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -618,6 +619,46 @@ def team_crest(team_id: int):
 # as a normal 200 with a valid PNG, so only the content identifies it.
 _PLACEHOLDER_LOGO_MD5 = "3617b8094f9ea8c81f6d0beff671978b"
 _TROPHY_EMBLEM = Path("static/trophy-emblem.svg")
+
+
+# YouTube publishes several thumbnail sizes and only guarantees the small one;
+# maxres is absent for older or lower-resolution uploads, so fall back in order.
+_YT_THUMBS = ("maxresdefault", "sddefault", "hqdefault", "mqdefault")
+_YT_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
+
+
+@app.get("/api/youtube-thumb/{video_id}")
+def youtube_thumb(video_id: str):
+    """Poster frame for an embedded highlight video, served same-origin.
+
+    Proxied for the same reason the rest of the media is: a blocker that eats
+    third-party images would otherwise leave the panel with an empty poster.
+    """
+    if not _YT_ID.match(video_id):
+        raise HTTPException(status_code=400, detail="Invalid video id.")
+
+    cache_dir = PHOTO_CACHE_DIR.parent / "youtube"
+    cached = cache_dir / f"{video_id}.jpg"
+    if cached.exists():
+        return Response(cached.read_bytes(), media_type="image/jpeg",
+                        headers=_MEDIA_HEADERS)
+
+    for name in _YT_THUMBS:
+        try:
+            resp = requests.get(f"https://img.youtube.com/vi/{video_id}/{name}.jpg",
+                                timeout=10)
+        except requests.RequestException:
+            continue
+        # YouTube answers a missing size with a 120x90 grey placeholder rather
+        # than a 404, so size is the only reliable signal that it is real.
+        if resp.ok and resp.headers.get("content-type", "").startswith("image/") \
+                and len(resp.content) > 3000:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(resp.content)
+            return Response(resp.content, media_type="image/jpeg",
+                            headers=_MEDIA_HEADERS)
+
+    raise HTTPException(status_code=404, detail="Thumbnail unavailable.")
 
 
 @app.get("/api/venue-photo/{venue_id}")

@@ -159,6 +159,32 @@ def _clip_config() -> dict[str, Any]:
         return {}
 
 
+def _provenance(clips: list, youtube: Optional[dict], images: Optional[dict]) -> str:
+    """Say exactly where the media in this panel came from.
+
+    Written per-source rather than as one fixed sentence, because the panel can
+    hold licensed video, an official YouTube embed, licensed action stills, or
+    none of those — and a viewer should never have to guess whether the picture
+    beside a goal is a photograph of that goal.
+    """
+    parts = ["Moments from the official timestamped event feed."]
+    if youtube:
+        channel = youtube.get("channel")
+        parts.append(f"Highlights embedded from {channel}'s official YouTube channel."
+                     if channel else "Highlights embedded from YouTube.")
+    if clips:
+        parts.append("Video from the configured licensed source.")
+    if images:
+        parts.append("Action photography from the configured licensed source.")
+    else:
+        parts.append(
+            "Moment images are player portraits from the data provider, which "
+            "publishes no action photography — they are pictures of the player, "
+            "not of the goal."
+        )
+    return " ".join(parts)
+
+
 def clips_for(fixture_id: int) -> dict[str, Any]:
     """Any configured video for this fixture. Empty when none is licensed.
 
@@ -169,22 +195,35 @@ def clips_for(fixture_id: int) -> dict[str, Any]:
     """
     entry = _clip_config().get(str(fixture_id)) or {}
     clips = entry.get("clips") or []
+    youtube_id = entry.get("youtube")
+    youtube = None
+    if youtube_id:
+        youtube = {
+            "id": youtube_id,
+            # Standard host, not youtube-nocookie. The privacy-enhanced domain
+            # is preferable in principle but was verified to fail here: both
+            # the FIFA and FC Barcelona uploads returned "Error 153 — video
+            # player configuration error" through nocookie while playing
+            # normally through www.youtube.com. The facade below is what keeps
+            # this private in practice — nothing loads from YouTube at all
+            # until the viewer presses play.
+            "embed": (f"https://www.youtube.com/embed/{youtube_id}"
+                      "?rel=0&modestbranding=1&enablejsapi=1"),
+            # Proxied like every other remote image, so a media blocker cannot
+            # leave the panel with an empty poster.
+            "thumb": f"/api/youtube-thumb/{youtube_id}",
+            "channel": entry.get("youtube_channel"),
+            "title": entry.get("youtube_title"),
+        }
     return {
         "clips": clips,
+        "youtube": youtube,
         "poster": entry.get("poster"),
         "credit": entry.get("credit"),
-        "has_video": bool(clips),
+        "has_video": bool(clips or youtube),
         # Stated in the payload so the client never has to imply that footage
         # or action photography exists when it doesn't.
-        "provenance": (
-            "Moments from the official timestamped event feed. Images are player "
-            "portraits and stadium photography from the data provider — it "
-            "publishes no action photography, so these are not pictures of the "
-            "goals themselves. "
-            + ("Video and any action shots come from the configured licensed source."
-               if clips else
-               "No licensed video or action photography is configured for this match.")
-        ),
+        "provenance": _provenance(clips, youtube, entry.get("images")),
     }
 
 
