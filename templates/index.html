@@ -1154,6 +1154,7 @@
   <header>
     <div class="brand" id="brand"><span class="bolt">⚡</span> Pitch<em>Sense</em></div>
     <button class="nav-link" id="nav-leaderboard">🏅 Leaderboard</button>
+    <button class="nav-link" id="nav-fpl">💎 Differentials</button>
     <div class="search-wrap">
       <div class="search-bar">
         <span class="icon">🔍</span>
@@ -1197,6 +1198,25 @@
       <div class="lb-controls" id="lb-metrics"></div>
       <div class="lb-controls" id="lb-leagues"></div>
       <div id="lb-list"></div>
+    </section>
+
+    <!-- ================= FPL DIFFERENTIALS ================= -->
+    <section id="view-fpl" class="view">
+      <button class="back-btn" data-back>← Back</button>
+      <div class="hero" style="margin-bottom:1rem">
+        <div class="eyebrow">Fantasy intelligence</div>
+        <h1 style="font-size:clamp(1.3rem,3vw,1.9rem)">💎 Differential Finder</h1>
+        <p id="fpl-context" style="font-size:0.88rem"></p>
+      </div>
+      <div class="lb-controls" id="fpl-filters"></div>
+      <div id="fpl-list"></div>
+      <div class="card" style="margin-top:1rem">
+        <p style="font-size:0.8rem">
+          Joins last season's per-90 output to this season's FPL price and ownership.
+          Ownership is pre-season, so it moves fast. Players who left the league or
+          whose clubs were relegated have no FPL entry and can't appear here.
+        </p>
+      </div>
     </section>
 
     <!-- ================= MATCH SELECT ================= -->
@@ -1368,6 +1388,7 @@
       select: $("view-select"),
       summary: $("view-summary"),
       leaderboard: $("view-leaderboard"),
+      fpl: $("view-fpl"),
     };
     let navStack = ["home"];
 
@@ -2293,6 +2314,77 @@
       $("lb-list").querySelectorAll("[data-cmp]").forEach((btn) =>
         btn.addEventListener("click", () => toggleCompare(+btn.dataset.cmp, btn.dataset.name))
       );
+    }
+
+    /* =========================== FPL differentials =========================== */
+    const FPL_FILTERS = [
+      { key: "deep", label: "Under 5% owned", own: 5, mins: 900 },
+      { key: "standard", label: "Under 10% owned", own: 10, mins: 900 },
+      { key: "wide", label: "Under 20% owned", own: 20, mins: 600 },
+    ];
+    let fplFilter = "standard";
+
+    $("nav-fpl").addEventListener("click", () => openFpl());
+
+    async function openFpl(key) {
+      if (key) fplFilter = key;
+      const f = FPL_FILTERS.find((x) => x.key === fplFilter) || FPL_FILTERS[1];
+      showView("fpl");
+      setRoute("/differentials?own=" + f.own);
+      $("fpl-list").innerHTML =
+        `<div class="loader"><div class="radar"></div><div class="hype">Hunting differentials…</div>
+         <div class="hype-sub">Joining FPL prices to last season's output</div></div>`;
+
+      $("fpl-filters").innerHTML = FPL_FILTERS.map((x) =>
+        `<button class="nav-link ${x.key === fplFilter ? "active" : ""}" data-fpl="${x.key}">${esc(x.label)}</button>`
+      ).join("");
+      $("fpl-filters").querySelectorAll("[data-fpl]").forEach((b) =>
+        b.addEventListener("click", () => openFpl(b.dataset.fpl))
+      );
+
+      try {
+        const res = await fetch(
+          `/api/fpl/differentials?max_ownership=${f.own}&min_minutes=${f.mins}&limit=20`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+        renderFpl(data);
+      } catch (err) {
+        $("fpl-list").innerHTML = `<div class="card notice">${esc(err.message)}</div>`;
+      }
+    }
+
+    function renderFpl(data) {
+      // The join is cross-provider and never total — say how complete it was
+      // rather than presenting a filtered list as the whole league.
+      $("fpl-context").textContent =
+        `${data.count} picks from ${data.join.matched} of ${data.join.pool} players matched ` +
+        `to FPL (${data.join.match_rate}%) · form from ${seasonLabel(data.season_performance)}`;
+
+      $("fpl-list").innerHTML = data.differentials.map((r, i) => {
+        const p = r.per90 || {};
+        return `
+          <div class="lb-row ${i < 3 ? "top" : ""}" style="grid-template-columns:34px 46px 1fr auto auto auto">
+            <div class="lb-rank">${i + 1}</div>
+            <div class="lb-face">
+              <img src="${esc(r.photo)}" alt="" decoding="async"
+                   onerror="this.replaceWith(Object.assign(document.createElement('span'),
+                            {textContent:'${esc(initials(r.name))}',style:'font-weight:800;font-size:.75rem'}))">
+            </div>
+            <div class="lb-id" data-player="${r.id}">
+              <div class="lb-name">${esc(r.name)}</div>
+              <div class="lb-sub">${esc(r.fpl_team || r.team || "")} · ${esc(r.position || "")} ·
+                ${(p.goals ?? 0)}G/90 · ${(p.assists ?? 0)}A/90 · ${(p.key_passes ?? 0)}KP/90</div>
+            </div>
+            <div class="lb-value" style="min-width:56px">£${r.price}</div>
+            <div class="lb-value" style="min-width:56px;color:var(--neon)">${r.ownership}%</div>
+            <button class="lb-compare" data-cmp="${r.id}" data-name="${esc(r.name)}">＋ VS</button>
+          </div>`;
+      }).join("");
+
+      $("fpl-list").querySelectorAll(".lb-id").forEach((el) =>
+        el.addEventListener("click", () => openPlayerDrawer(+el.dataset.player, "#37f0a2")));
+      $("fpl-list").querySelectorAll("[data-cmp]").forEach((b) =>
+        b.addEventListener("click", () => toggleCompare(+b.dataset.cmp, b.dataset.name)));
     }
 
     /* =========================== Head-to-head comparison =========================== */

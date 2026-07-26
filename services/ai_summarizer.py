@@ -149,6 +149,59 @@ def generate_match_summary(match_context: dict[str, Any]) -> MatchSummary:
     return summary
 
 
+class PreMatchDossier(BaseModel):
+    headline: str                  # 6-10 words framing the fixture
+    overview: str                  # 2-3 sentences on what's at stake
+    tactical_matchups: list[str]   # where the game is likely decided
+    key_duels: list[str]           # individual battles worth watching
+    historical_trends: list[str]   # what the H2H and form record actually shows
+    watch_points: list[str]        # concrete things to look for on the day
+    caveats: list[str]             # what the data can't tell us
+
+
+def generate_prematch_dossier(context: dict[str, Any]) -> PreMatchDossier:
+    """Tactical preview of an upcoming fixture, grounded in the record.
+
+    The prompt is explicit that this is analysis of history, not prediction:
+    the match hasn't happened, so anything stated as fact must be traceable to
+    a past result, and everything else has to be marked as inference. Without
+    that instruction a model will happily invent lineups, injuries and
+    scorelines that read exactly like reporting.
+    """
+    response = _client().messages.parse(
+        model=MODEL,
+        max_tokens=8000,
+        system=[{"type": "text", "text": SYSTEM_PROMPT,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{
+            "role": "user",
+            "content": (
+                "Write a pre-match tactical dossier for the upcoming fixture below.\n\n"
+                "This match has NOT been played. You are given only historical "
+                "evidence: recent form and head-to-head results.\n"
+                "- Every factual claim must trace to something in that data. "
+                "Cite the match or run it comes from.\n"
+                "- Do NOT invent lineups, injuries, transfers, formations, "
+                "quotes, or a predicted scoreline. You have none of that.\n"
+                "- Where you reason beyond the data, mark it as inference "
+                "('on this record you would expect…').\n"
+                "- `caveats` must name what this data genuinely cannot tell us "
+                "— squad changes since these matches, absentees, and the fact "
+                "that pre-season form is a weak signal.\n"
+                "- tactical_matchups, key_duels, historical_trends and "
+                "watch_points: 3-4 entries each, concrete and under ~20 words.\n\n"
+                f"Fixture and historical record:\n{json.dumps(context, ensure_ascii=False)}"
+            ),
+        }],
+        output_format=PreMatchDossier,
+    )
+    if response.stop_reason == "refusal":
+        raise RuntimeError("The model declined to preview this fixture.")
+    if response.parsed_output is None:
+        raise RuntimeError("Failed to parse dossier from model response.")
+    return response.parsed_output
+
+
 def _strip_players(match_context: dict[str, Any]) -> dict[str, Any]:
     """Drop the per-player rows — ~14k of the ~39k input tokens.
 

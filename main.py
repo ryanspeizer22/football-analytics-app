@@ -39,10 +39,12 @@ from services import (
     api_service,
     competitions,
     enrich,
+    fpl,
     leaderboard,
     momentum,
     og_image,
     player_profile,
+    prematch,
     rate_limit,
     slugs,
     stats,
@@ -873,6 +875,113 @@ def get_leaderboard(
         "metrics": leaderboard.metric_options(),
         "pool_size": len(pool),
         "leaders": leaderboard.rank(pool, metric, limit),
+    }
+
+
+@app.get("/api/match/{fixture_id}/dossier")
+def match_dossier(request: Request, fixture_id: int, refresh: bool = False):
+    """Pre-match tactical dossier for an upcoming fixture.
+
+    Manual trigger. Scheduling this 48 hours out needs a persistent host with a
+    scheduler; the generation itself is identical either way, so wiring a cron
+    to this endpoint at deploy time is all that's left.
+    """
+    cache_key = f"dossier-{fixture_id}"
+    if not refresh:
+        cached = summary_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    try:
+        context = prematch.build_dossier_context(fixture_id)
+    except api_service.FootballAPIError as exc:
+        logger.warning("Dossier context failed for %s: %s", fixture_id, exc)
+        raise _api_error(exc) from exc
+
+    if not prematch.is_upcoming(context):
+        raise HTTPException(
+            status_code=409,
+            detail=("That match has already been played — use the match analysis "
+                    "instead of a pre-match dossier."),
+        )
+
+    with _paid_call(request, f"dossier {fixture_id}"):
+        logger.info("Generating pre-match dossier for fixture %s", fixture_id)
+        try:
+            dossier = ai_summarizer.generate_prematch_dossier(context)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    result = {
+        "fixture": context["fixture"],
+        "home_team": context["home_team"],
+        "away_team": context["away_team"],
+        "home_form": context["home_form"]["record"],
+        "away_form": context["away_form"]["record"],
+        "head_to_head": context["head_to_head"],
+        # Stated so a thin dossier is visibly thin rather than quietly
+        # confident — a newly promoted side has almost no usable record.
+        "evidence": prematch.evidence_summary(context),
+        "dossier": dossier.model_dump(),
+    }
+    # Safe to cache: the inputs are historical and don't change before kickoff.
+    summary_cache.set(cache_key, result)
+    return result
+
+
+@app.get("/api/fpl/differentials")
+def fpl_differentials(
+    max_ownership: float = Query(10.0, ge=0.1, le=100),
+    min_minutes: int = Query(900, ge=0, le=4000),
+    limit: int = Query(20, ge=1, le=60),
+    season: int = Query(None),
+):
+    """Under-owned FPL players whose underlying numbers outrun their price.
+
+    Joins last season's per-90 output (API-Football) to this season's price and
+    ownership (official FPL API). Those are deliberately different seasons —
+    that *is* the pre-season differential question: what a player did last year
+    against what he costs and how few people have noticed.
+    """
+    season = season or competitions.default_season(39)
+
+    pool = summary_cache.get(f"pool-39-{season}")
+    if pool is None:
+        try:
+            pool = leaderboard.fetch_league_players(39, season)
+        except api_service.FootballAPIError as exc:
+            raise _api_error(exc) from exc
+        if pool:
+            summary_cache.set(f"pool-39-{season}", pool)
+
+    bootstrap = summary_cache.get("fpl-bootstrap")
+    if bootstrap is None:
+        try:
+            bootstrap = fpl.fetch_bootstrap()
+        except requests.RequestException as exc:
+            logger.warning("FPL API unavailable: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="The Fantasy Premier League API is unavailable right now.",
+            ) from exc
+        summary_cache.set("fpl-bootstrap", bootstrap)
+
+    index = fpl.build_fpl_index(bootstrap)
+    joined = fpl.join(pool, index)
+    picks = fpl.differentials(joined["rows"], max_ownership, min_minutes, limit)
+
+    return {
+        "season_performance": season,
+        "filters": {"max_ownership": max_ownership, "min_minutes": min_minutes},
+        # Surfaced rather than hidden: a join across two providers is never
+        # total, and the caller should be able to see how complete it was.
+        "join": {
+            "matched": joined["matched"],
+            "pool": joined["total"],
+            "match_rate": joined["match_rate"],
+        },
+        "count": len(picks),
+        "differentials": picks,
     }
 
 
