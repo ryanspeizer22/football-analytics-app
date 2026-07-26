@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+from PIL import Image
+from io import BytesIO
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -41,7 +43,6 @@ from services import (
     api_service,
     competitions,
     enrich,
-    fpl,
     highlights,
     leaderboard,
     momentum,
@@ -211,41 +212,6 @@ def leaderboard_page(request: Request, slug: str, metric: str = Query("rating"))
     )
 
 
-# Ownership thresholds the differentials view offers, mapped to the filter key
-# the client uses. Kept server-side too so a shared link restores the same view.
-_FPL_OWNERSHIP_FILTERS = {5: "deep", 10: "standard", 20: "wide"}
-
-
-@app.get("/differentials", response_class=HTMLResponse)
-def differentials_page(request: Request, own: str = Query("10")):
-    """Deep link to the FPL differential finder.
-
-    The client pushes /differentials?own=N, so without this route a refresh or
-    a shared link falls through to the API's 404 handler and renders raw JSON
-    instead of the app.
-
-    `own` is validated loosely on purpose. It only picks which ownership pill
-    opens, so a stale or hand-edited value should land on the default view —
-    a 422 here would put the user back in front of raw JSON, which is the bug
-    this route exists to fix. The API endpoint keeps its strict bounds.
-    """
-    try:
-        requested = float(own)
-    except (TypeError, ValueError):
-        requested = 10.0
-    threshold = min(_FPL_OWNERSHIP_FILTERS, key=lambda t: abs(t - requested))
-    return _shell(
-        request,
-        title="FPL differential finder — PitchSense",
-        description=(f"Under-{threshold}%-owned Fantasy Premier League players whose "
-                     "per-90 output outruns their price."),
-        path=f"/differentials?own={threshold}",
-        og_image=f"{BASE_URL}/og/differentials.png",
-        boot={"view": "fpl", "own": threshold,
-              "filter": _FPL_OWNERSHIP_FILTERS[threshold]},
-    )
-
-
 # ---------------------------------------------------------------------------
 # Dynamic OpenGraph images
 # ---------------------------------------------------------------------------
@@ -314,14 +280,6 @@ def og_leaderboard(league_id: int, season: int):
     return Response(png, media_type="image/png", headers=_OG_HEADERS)
 
 
-@app.get("/og/differentials.png")
-def og_differentials():
-    png = og_image.generic_card(
-        "FPL Differential Finder", "Under-owned players, ranked by output · PitchSense"
-    )
-    return Response(png, media_type="image/png", headers=_OG_HEADERS)
-
-
 @app.get("/robots.txt", response_class=PlainTextResponse)
 def robots():
     """Allow the app shell, keep crawlers out of the paid API surface."""
@@ -338,16 +296,14 @@ def robots():
 def sitemap():
     """The stable landing pages.
 
-    Match and comparison URLs are unbounded and generated on demand, so they
-    stay out; /differentials is a fixed page with its own title and OG card.
+    Match, comparison and leaderboard URLs are unbounded and generated on
+    demand, so only the root is listed.
     """
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"  <url><loc>{BASE_URL}/</loc><changefreq>daily</changefreq>"
         "<priority>1.0</priority></url>\n"
-        f"  <url><loc>{BASE_URL}/differentials</loc><changefreq>daily</changefreq>"
-        "<priority>0.8</priority></url>\n"
         "</urlset>\n"
     )
     return Response(content=xml, media_type="application/xml")
@@ -661,10 +617,32 @@ def youtube_thumb(video_id: str):
     raise HTTPException(status_code=404, detail="Thumbnail unavailable.")
 
 
+# A real stadium photograph from this provider is 600x450. Anything markedly
+# smaller is the same generic grey shield it serves for competitions it has no
+# artwork for — and stretched across a banner it reads as a broken image.
+_MIN_VENUE_WIDTH = 400
+
+
 @app.get("/api/venue-photo/{venue_id}")
 def venue_photo(venue_id: int):
-    """Photograph of the stadium. Real photography, from the provider's CDN."""
-    return _serve_media("venues", venue_id, "Venue")
+    """Photograph of the stadium, or 404 when the provider only has a placeholder.
+
+    404 rather than serving the shield: the client hides the banner on error,
+    which is the right outcome — no header at all beats a grey icon blown up to
+    a thousand pixels wide.
+    """
+    response = _serve_media("venues", venue_id, "Venue")
+    try:
+        with Image.open(BytesIO(response.body)) as img:
+            width, height = img.size
+    except Exception:
+        raise HTTPException(status_code=404, detail="Venue image unreadable.")
+
+    if width < _MIN_VENUE_WIDTH:
+        logger.info("Venue %s is a %dx%d placeholder, not a photograph",
+                    venue_id, width, height)
+        raise HTTPException(status_code=404, detail="No venue photograph.")
+    return response
 
 
 @app.get("/api/competition-logo/{league_id}")
@@ -1209,62 +1187,6 @@ def match_dossier(request: Request, fixture_id: int, refresh: bool = False):
     # Safe to cache: the inputs are historical and don't change before kickoff.
     summary_cache.set(cache_key, result)
     return result
-
-
-@app.get("/api/fpl/differentials")
-def fpl_differentials(
-    max_ownership: float = Query(10.0, ge=0.1, le=100),
-    min_minutes: int = Query(900, ge=0, le=4000),
-    limit: int = Query(20, ge=1, le=60),
-    season: int = Query(None),
-):
-    """Under-owned FPL players whose underlying numbers outrun their price.
-
-    Joins last season's per-90 output (API-Football) to this season's price and
-    ownership (official FPL API). Those are deliberately different seasons —
-    that *is* the pre-season differential question: what a player did last year
-    against what he costs and how few people have noticed.
-    """
-    season = season or competitions.default_season(39)
-
-    pool = summary_cache.get(f"pool-39-{season}")
-    if pool is None:
-        try:
-            pool = leaderboard.fetch_league_players(39, season)
-        except api_service.FootballAPIError as exc:
-            raise _api_error(exc) from exc
-        if pool:
-            summary_cache.set(f"pool-39-{season}", pool)
-
-    bootstrap = summary_cache.get("fpl-bootstrap")
-    if bootstrap is None:
-        try:
-            bootstrap = fpl.fetch_bootstrap()
-        except requests.RequestException as exc:
-            logger.warning("FPL API unavailable: %s", exc)
-            raise HTTPException(
-                status_code=502,
-                detail="The Fantasy Premier League API is unavailable right now.",
-            ) from exc
-        summary_cache.set("fpl-bootstrap", bootstrap)
-
-    index = fpl.build_fpl_index(bootstrap)
-    joined = fpl.join(pool, index)
-    picks = fpl.differentials(joined["rows"], max_ownership, min_minutes, limit)
-
-    return {
-        "season_performance": season,
-        "filters": {"max_ownership": max_ownership, "min_minutes": min_minutes},
-        # Surfaced rather than hidden: a join across two providers is never
-        # total, and the caller should be able to see how complete it was.
-        "join": {
-            "matched": joined["matched"],
-            "pool": joined["total"],
-            "match_rate": joined["match_rate"],
-        },
-        "count": len(picks),
-        "differentials": _with_club_colors(picks),
-    }
 
 
 @app.get("/api/player/{player_id}/season")

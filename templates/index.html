@@ -719,23 +719,40 @@
     .hl-yt-face:hover .hl-yt-play::after { border-left-color: #04130b; }
     .hl-yt-face:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
 
-    /* Real photograph of the ground, dimmed so the caption stays legible. */
+    /* Real photograph of the ground. The source is 600x450, so a full-bleed
+       132px band cropped it to a 17% sliver and upscaled it 1.75x — which is
+       what read as stretched and soft. A 12:5 frame shows roughly half the
+       photograph at a far gentler scale, and the width is capped so the
+       upscale never runs away on a wide viewport. An <img>, not a background,
+       so a missing photo removes the whole band instead of leaving a gap. */
     .hl-venue {
-      position: relative; height: 132px; border-radius: 14px; overflow: hidden;
-      margin-bottom: 1.1rem; border: 1px solid var(--border);
-      background-image: linear-gradient(180deg,
-        rgba(6,9,16,0.15) 0%, rgba(6,9,16,0.55) 55%, rgba(6,9,16,0.94) 100%), var(--shot);
-      background-size: cover, cover; background-position: center 42%, center 42%;
+      position: relative; margin: 0 0 1.1rem;
+      aspect-ratio: 12 / 5; max-width: 760px;
+      border-radius: 14px; overflow: hidden;
+      border: 1px solid var(--border);
+      background: #05070c;
     }
-    .hl-venue-label {
-      position: absolute; left: 0.95rem; bottom: 0.75rem;
-      display: flex; align-items: baseline; gap: 0.55rem;
+    .hl-venue img {
+      width: 100%; height: 100%; object-fit: cover; object-position: center 45%;
+      display: block;
     }
-    .hl-venue-label strong { font-size: 0.95rem; }
-    .hl-venue-label span {
-      font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase;
+    /* Gradient as an overlay rather than a stacked background layer, so it
+       darkens only the strip the caption sits on. */
+    .hl-venue::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(180deg,
+        transparent 42%, rgba(5,8,14,0.62) 74%, rgba(5,8,14,0.94) 100%);
+    }
+    .hl-venue figcaption {
+      position: absolute; left: 1rem; right: 1rem; bottom: 0.8rem; z-index: 1;
+      display: flex; align-items: baseline; gap: 0.55rem; flex-wrap: wrap;
+    }
+    .hl-venue figcaption strong { font-size: 1rem; letter-spacing: -0.01em; }
+    .hl-venue figcaption span {
+      font-size: 0.68rem; letter-spacing: 0.11em; text-transform: uppercase;
       color: var(--text-dim);
     }
+    @media (max-width: 640px) { .hl-venue { aspect-ratio: 16 / 9; } }
 
     /* The photograph attached to a moment. Circular and ringed in the team's
        colour so the reel reads as faces first, text second. */
@@ -767,7 +784,32 @@
       font-variant-numeric: tabular-nums; font-weight: 800; font-size: 0.8rem;
       color: var(--c, var(--neon)); text-align: right;
     }
-    .hl-icon { font-size: 0.95rem; text-align: center; }
+    /* Fixed box and centred line so a glyph-width emoji and a geometric one
+       land on the same optical centre — mixed icon widths were what made the
+       column look ragged. */
+    .hl-icon {
+      font-size: 0.95rem; line-height: 1; width: 1.4rem;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-variant-emoji: text;
+    }
+    /* An overturned decision is a reversal, not a goal — set apart so it never
+       reads as one at a glance. */
+    .hl-moment.var_overturn {
+      background: rgba(255, 93, 108, 0.055);
+      border-left-color: var(--danger);
+    }
+    .hl-moment.var_overturn .hl-min { color: var(--danger); }
+    .hl-moment.var_overturn .hl-icon { color: var(--danger); font-size: 1.05rem; }
+    .hl-moment.var_overturn .hl-what strong { text-decoration: line-through;
+      text-decoration-color: rgba(255,93,108,0.7); }
+    /* Inline marker on a goal that VAR checked and let stand. */
+    .hl-var {
+      margin-left: 0.45rem; vertical-align: middle;
+      font-size: 0.56rem; font-weight: 800; letter-spacing: 0.08em;
+      color: var(--neon); background: var(--neon-soft);
+      border: 1px solid rgba(55, 240, 162, 0.32);
+      border-radius: 999px; padding: 0.1rem 0.36rem;
+    }
     .hl-what { min-width: 0; }
     .hl-what strong { font-size: 0.88rem; display: block; }
     .hl-sub {
@@ -1030,11 +1072,22 @@
     }
     .mvp-verdict { margin: 0.65rem 0 0.4rem; font-size: 0.8rem; font-weight: 700; color: var(--rarity); filter: brightness(1.25); }
     .mvp-detail { font-size: 0.82rem; color: var(--text-dim); line-height: 1.55; }
-    .mvp-tier {
-      position: absolute; bottom: 0.7rem; right: 0.9rem;
-      font-size: 0.58rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase;
-      color: var(--rarity); opacity: 0.85;
+    /* Tier and the compare pill share a footer row rather than both being
+       absolutely positioned into the corners. The pill used to sit at
+       top/right 0.6rem — outside the card's 1rem padding — so it crowded the
+       rounded border and overlapped the rarity sheen. In the flow it keeps the
+       card's padding and can never collide with the text above it. */
+    .mvp-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.6rem; margin-top: 0.85rem; padding-top: 0.7rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
     }
+    .mvp-tier {
+      font-size: 0.58rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--rarity); opacity: 0.9; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mvp-foot .lb-compare { flex-shrink: 0; }
 
     /* ===== Leaderboard ===== */
     .nav-link {
@@ -1486,7 +1539,6 @@
   <header>
     <div class="brand" id="brand"><span class="bolt">⚡</span> Pitch<em>Sense</em></div>
     <button class="nav-link" id="nav-leaderboard">🏅 Leaderboard</button>
-    <button class="nav-link" id="nav-fpl">💎 Differentials</button>
     <div class="search-wrap">
       <div class="search-bar">
         <span class="icon">🔍</span>
@@ -1530,25 +1582,6 @@
       <div class="lb-controls" id="lb-metrics"></div>
       <div class="lb-controls" id="lb-leagues"></div>
       <div id="lb-list"></div>
-    </section>
-
-    <!-- ================= FPL DIFFERENTIALS ================= -->
-    <section id="view-fpl" class="view">
-      <button class="back-btn" data-back>← Back</button>
-      <div class="hero" style="margin-bottom:1rem">
-        <div class="eyebrow">Fantasy intelligence</div>
-        <h1 style="font-size:clamp(1.3rem,3vw,1.9rem)">💎 Differential Finder</h1>
-        <p id="fpl-context" style="font-size:0.88rem"></p>
-      </div>
-      <div class="lb-controls" id="fpl-filters"></div>
-      <div id="fpl-list"></div>
-      <div class="card" style="margin-top:1rem">
-        <p style="font-size:0.8rem">
-          Joins last season's per-90 output to this season's FPL price and ownership.
-          Ownership is pre-season, so it moves fast. Players who left the league or
-          whose clubs were relegated have no FPL entry and can't appear here.
-        </p>
-      </div>
     </section>
 
     <!-- ================= MATCH SELECT ================= -->
@@ -1729,7 +1762,6 @@
       select: $("view-select"),
       summary: $("view-summary"),
       leaderboard: $("view-leaderboard"),
-      fpl: $("view-fpl"),
     };
     let navStack = ["home"];
 
@@ -2258,7 +2290,7 @@
 
     const MOMENT_ICON = {
       goal: "⚽", penalty: "🎯", own_goal: "🙃",
-      miss: "❌", red_card: "🟥", var: "📺",
+      miss: "❌", red_card: "🟥", var_overturn: "⊘",
     };
 
     async function loadHighlights(match, load) {
@@ -2321,11 +2353,13 @@
          where the provider holds a shot of it. */
       const v = data.venue;
       const venueBand = v && v.photo
-        ? `<div class="hl-venue" style="--shot:url('${esc(v.photo)}')">
-             <div class="hl-venue-label">
+        ? `<figure class="hl-venue">
+             <img src="${esc(v.photo)}" alt="${esc(v.name)}" loading="eager"
+                  onerror="this.closest('.hl-venue').remove()">
+             <figcaption>
                <strong>${esc(v.name)}</strong>${v.city ? `<span>${esc(v.city)}</span>` : ""}
-             </div>
-           </div>`
+             </figcaption>
+           </figure>`
         : "";
 
       /* Each moment carries a real photograph: a licensed action shot where one
@@ -2348,7 +2382,8 @@
                <span class="hl-min">${esc(m.minute_label)}</span>
                <span class="hl-icon">${MOMENT_ICON[m.kind] || "•"}</span>
                <span class="hl-what">
-                 <strong>${esc(m.player || m.title)}</strong>
+                 <strong>${esc(m.player || m.title)}${m.var_checked
+                   ? `<span class="hl-var" title="Checked by VAR and allowed to stand">VAR ✓</span>` : ""}</strong>
                  <span class="hl-sub">${esc(m.title)}${m.assist ? ` · assist ${esc(m.assist)}` : ""} · ${esc(m.team || "")}</span>
                </span>
                ${m.score ? `<span class="hl-score">${esc(m.score)}</span>` : ""}
@@ -2591,10 +2626,6 @@
                data-player="${p.player_id ?? ""}" data-rarity="${color}"
                role="button" tabindex="0"
                aria-label="Season stats for ${esc(p.player_name)}">
-            ${p.player_id ? `<button class="lb-compare" data-cmp="${p.player_id}"
-                 data-name="${esc(p.player_name)}"
-                 style="position:absolute;top:0.6rem;right:0.6rem;z-index:3"
-                 >${cmpHas(p.player_id) ? "✓" : "＋"} VS</button>` : ""}
             <div class="mvp-head">
               <div class="mvp-portrait">
                 <div class="frame">${portrait}</div>
@@ -2609,7 +2640,12 @@
             </div>
             <div class="mvp-verdict">${esc(p.rating_comment)}</div>
             <div class="mvp-detail">${esc(p.detail)}</div>
-            <div class="mvp-tier">${tier}</div>
+            <div class="mvp-foot">
+              <span class="mvp-tier">${tier}</span>
+              ${p.player_id ? `<button class="lb-compare ${cmpHas(p.player_id) ? "picked" : ""}"
+                   data-cmp="${p.player_id}" data-name="${esc(p.player_name)}"
+                   >${cmpHas(p.player_id) ? "✓" : "＋"} VS</button>` : ""}
+            </div>
           </div>`;
       }).join("");
 
@@ -2858,10 +2894,6 @@
             season: boot?.season ?? null,
             metric: boot?.metric ?? qs.get("metric") ?? "rating",
           });
-        } else if (boot?.view === "fpl" || path === "/differentials") {
-          const own = boot?.own ?? +qs.get("own");
-          const match = FPL_FILTERS.find((x) => x.own === own);
-          await openFpl(boot?.filter ?? match?.key ?? "standard");
         }
       } finally {
         suppressRoute = false;
@@ -2978,80 +3010,6 @@
       $("lb-list").querySelectorAll("[data-cmp]").forEach((btn) =>
         btn.addEventListener("click", () => toggleCompare(+btn.dataset.cmp, btn.dataset.name))
       );
-    }
-
-    /* =========================== FPL differentials =========================== */
-    const FPL_FILTERS = [
-      { key: "deep", label: "Under 5% owned", own: 5, mins: 900 },
-      { key: "standard", label: "Under 10% owned", own: 10, mins: 900 },
-      { key: "wide", label: "Under 20% owned", own: 20, mins: 600 },
-    ];
-    let fplFilter = "standard";
-
-    $("nav-fpl").addEventListener("click", () => openFpl());
-
-    async function openFpl(key) {
-      if (key) fplFilter = key;
-      const f = FPL_FILTERS.find((x) => x.key === fplFilter) || FPL_FILTERS[1];
-      showView("fpl");
-      setRoute("/differentials?own=" + f.own);
-      $("fpl-list").innerHTML =
-        `<div class="loader"><div class="radar"></div><div class="hype">Hunting differentials…</div>
-         <div class="hype-sub">Joining FPL prices to last season's output</div></div>`;
-
-      $("fpl-filters").innerHTML = FPL_FILTERS.map((x) =>
-        `<button class="nav-link ${x.key === fplFilter ? "active" : ""}" data-fpl="${x.key}">${esc(x.label)}</button>`
-      ).join("");
-      $("fpl-filters").querySelectorAll("[data-fpl]").forEach((b) =>
-        b.addEventListener("click", () => openFpl(b.dataset.fpl))
-      );
-
-      try {
-        const res = await fetch(
-          `/api/fpl/differentials?max_ownership=${f.own}&min_minutes=${f.mins}&limit=20`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
-        renderFpl(data);
-      } catch (err) {
-        $("fpl-list").innerHTML = `<div class="card notice">${esc(err.message)}</div>`;
-      }
-    }
-
-    function renderFpl(data) {
-      // The join is cross-provider and never total — say how complete it was
-      // rather than presenting a filtered list as the whole league.
-      $("fpl-context").textContent =
-        `${data.count} picks from ${data.join.matched} of ${data.join.pool} players matched ` +
-        `to FPL (${data.join.match_rate}%) · form from ${seasonLabel(data.season_performance)}`;
-
-      $("fpl-list").innerHTML = data.differentials.map((r, i) => {
-        const p = r.per90 || {};
-        return `
-          <div class="lb-row ${i < 3 ? "top" : ""}" style="grid-template-columns:34px 46px 1fr auto auto auto">
-            <div class="lb-rank">${i + 1}</div>
-            <div class="lb-face">
-              <img src="${esc(r.photo)}" alt="" decoding="async"
-                   onerror="this.replaceWith(Object.assign(document.createElement('span'),
-                            {textContent:'${esc(initials(r.name))}',style:'font-weight:800;font-size:.75rem'}))">
-            </div>
-            <div class="lb-id" data-player="${r.id}">
-              <div class="lb-name">${esc(r.name)}</div>
-              <div class="lb-sub">
-                ${crest({ id: r.team_id, color: r.team_color }, "sm")}
-                <span>${esc(r.fpl_team || r.team || "")} · ${esc(r.position || "")} ·
-                  ${(p.goals ?? 0)}G/90 · ${(p.assists ?? 0)}A/90 · ${(p.key_passes ?? 0)}KP/90</span>
-              </div>
-            </div>
-            <div class="lb-value" style="min-width:56px">£${r.price}</div>
-            <div class="lb-value" style="min-width:56px;color:var(--neon)">${r.ownership}%</div>
-            <button class="lb-compare" data-cmp="${r.id}" data-name="${esc(r.name)}">＋ VS</button>
-          </div>`;
-      }).join("");
-
-      $("fpl-list").querySelectorAll(".lb-id").forEach((el) =>
-        el.addEventListener("click", () => openPlayerDrawer(+el.dataset.player, "#37f0a2")));
-      $("fpl-list").querySelectorAll("[data-cmp]").forEach((b) =>
-        b.addEventListener("click", () => toggleCompare(+b.dataset.cmp, b.dataset.name)));
     }
 
     /* =========================== Head-to-head comparison =========================== */

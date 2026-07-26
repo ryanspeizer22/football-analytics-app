@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 _CLIP_DATA = Path(__file__).resolve().parent / "highlights_data.json"
 
+# VAR outcomes that uphold the original decision. These are folded into the
+# event they confirm rather than listed separately — the alternative is the
+# same goal appearing twice, one line apart.
+_VAR_UPHELD = ("confirmed", "upheld")
+
 # Which events earn a place in the reel, and how prominently.
 _GOAL_KINDS = {
     "normal goal": ("goal", "Goal"),
@@ -81,7 +86,20 @@ def build_moments(context: dict[str, Any]) -> list[dict[str, Any]]:
         elif etype == "card" and "red" in detail:
             kind, title = "red_card", "Red card"
         elif etype == "var":
-            kind, title = "var", (event.get("detail") or "VAR decision")
+            # A VAR check that upholds what already happened is not a separate
+            # moment — "57' Goal confirmed" directly under "57' Goal" is the
+            # same event twice. Fold it into the goal as a checked marker and
+            # drop the row. Overturns are the opposite: they change the score,
+            # so they earn a row of their own.
+            if any(word in detail for word in _VAR_UPHELD):
+                for earlier in reversed(moments):
+                    same_player = earlier.get("player") and earlier["player"] == player
+                    close_enough = abs(earlier["minute"] - ((event.get("time") or {}).get("elapsed") or 0)) <= 2
+                    if same_player or (close_enough and earlier["team_id"] == team_id):
+                        earlier["var_checked"] = True
+                        break
+                continue
+            kind, title = "var_overturn", (event.get("detail") or "VAR decision")
 
         if not kind:
             continue
@@ -105,7 +123,10 @@ def build_moments(context: dict[str, Any]) -> list[dict[str, Any]]:
             "team_id": team_id,
             "team": (event.get("team") or {}).get("name"),
             "is_home": is_home,
-            "score": f"{running_home}–{running_away}" if kind != "miss" else None,
+            # No score badge on a miss or an overturn: neither advanced the
+            # scoreline, and a badge there reads as though one had.
+            "score": (f"{running_home}–{running_away}"
+                      if kind not in ("miss", "var_overturn") else None),
         })
     return moments
 
