@@ -253,26 +253,6 @@ def clips_for(fixture_id: int, resolved: Optional[dict[str, Any]] = None) -> dic
     }
 
 
-def _venue(context: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """The ground, with its photograph where the provider has one.
-
-    Real architectural photography of the actual stadium — the one piece of
-    scene-setting imagery genuinely available for a match. The id is often
-    absent on older or neutral-venue fixtures, in which case the name still
-    stands on its own.
-    """
-    raw = ((context.get("fixture") or {}).get("fixture") or {}).get("venue") or {}
-    name = raw.get("name")
-    if not name:
-        return None
-    venue_id = raw.get("id")
-    return {
-        "name": name,
-        "city": raw.get("city"),
-        "photo": f"/api/venue-photo/{venue_id}" if venue_id else None,
-    }
-
-
 def auto_map(context: dict[str, Any], fixture_id: int) -> Optional[dict[str, Any]]:
     """Look up an official highlights video for this fixture, once, and keep it.
 
@@ -330,7 +310,6 @@ def build(context: dict[str, Any], fixture_id: int) -> dict[str, Any]:
     payload = {
         "moments": moments,
         "shootout": build_shootout(context),
-        "venue": _venue(context),
         **clips_for(fixture_id, auto_map(context, fixture_id)),
     }
     # Always present. It backs two cases: no video resolved at all, and a

@@ -746,44 +746,6 @@
     .hl-yt-face:hover .hl-yt-play::after { border-left-color: #04130b; }
     .hl-yt-face:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
 
-    /* Real photograph of the ground. The source is 600x450, so a full-bleed
-       132px band cropped it to a 17% sliver and upscaled it 1.75x — which is
-       what read as stretched and soft. A 12:5 frame shows roughly half the
-       photograph at a far gentler scale, and the width is capped so the
-       upscale never runs away on a wide viewport. An <img>, not a background,
-       so a missing photo removes the whole band instead of leaving a gap. */
-    .hl-venue {
-      /* Sits below the reel, never above it. At the top of the panel a wide
-         photograph reads as a video player that failed to load, which is
-         exactly the impression worth avoiding. */
-      position: relative; margin: 1.2rem 0 0;
-      aspect-ratio: 12 / 5; max-width: 760px;
-      border-radius: 14px; overflow: hidden;
-      border: 1px solid var(--border);
-      background: #05070c;
-    }
-    .hl-venue img {
-      width: 100%; height: 100%; object-fit: cover; object-position: center 45%;
-      display: block;
-    }
-    /* Gradient as an overlay rather than a stacked background layer, so it
-       darkens only the strip the caption sits on. */
-    .hl-venue::after {
-      content: ""; position: absolute; inset: 0; pointer-events: none;
-      background: linear-gradient(180deg,
-        transparent 42%, rgba(5,8,14,0.62) 74%, rgba(5,8,14,0.94) 100%);
-    }
-    .hl-venue figcaption {
-      position: absolute; left: 1rem; right: 1rem; bottom: 0.8rem; z-index: 1;
-      display: flex; align-items: baseline; gap: 0.55rem; flex-wrap: wrap;
-    }
-    .hl-venue figcaption strong { font-size: 1rem; letter-spacing: -0.01em; }
-    .hl-venue figcaption span {
-      font-size: 0.68rem; letter-spacing: 0.11em; text-transform: uppercase;
-      color: var(--text-dim);
-    }
-    @media (max-width: 640px) { .hl-venue { aspect-ratio: 16 / 9; } }
-
     /* The photograph attached to a moment. Circular and ringed in the team's
        colour so the reel reads as faces first, text second. */
     .hl-face {
@@ -2557,19 +2519,6 @@
            </div>`
         : "";
 
-      /* Scene-setter: real photography of the ground the match was played at,
-         where the provider holds a shot of it. */
-      const v = data.venue;
-      const venueBand = v && v.photo
-        ? `<figure class="hl-venue">
-             <img src="${esc(v.photo)}" alt="${esc(v.name)}" loading="eager"
-                  onerror="this.closest('.hl-venue').remove()">
-             <figcaption>
-               <strong>${esc(v.name)}</strong>${v.city ? `<span>${esc(v.city)}</span>` : ""}
-             </figcaption>
-           </figure>`
-        : "";
-
       /* Each moment carries a real photograph: a licensed action shot where one
          is configured, otherwise the portrait of the player who produced it.
          The provider publishes no action photography at all, so the portrait is
@@ -2626,7 +2575,7 @@
         : `<p class="hl-provenance">${esc(data.provenance || "")}</p>`;
 
       $("highlights-body").innerHTML =
-        player + reel + shootout + venueBand + provenance;
+        player + reel + shootout + provenance;
 
       /* Mounted through YouTube's IFrame API rather than as a bare iframe, so
          a refusal is detectable. Rights are territorial — NBC's Premier League

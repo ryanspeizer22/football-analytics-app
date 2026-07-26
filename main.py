@@ -52,6 +52,7 @@ from services import (
     rate_limit,
     slugs,
     stats,
+    cache_migrate,
     summary_cache,
     teams,
     textclean,
@@ -86,7 +87,7 @@ PHOTO_CDN = "https://media.api-sports.io/football/players/{player_id}.png"
 # competition logo needs no stored URL — only the id we already have.
 _MEDIA_CDN = "https://media.api-sports.io/football/{kind}/{asset_id}.png"
 _MEDIA_KINDS = {"players": "photos", "teams": "crests",
-                "leagues": "competitions", "venues": "venues"}
+                "leagues": "competitions"}
 
 
 def _client_id(request: Request) -> str:
@@ -618,34 +619,6 @@ def youtube_thumb(video_id: str):
     raise HTTPException(status_code=404, detail="Thumbnail unavailable.")
 
 
-# A real stadium photograph from this provider is 600x450. Anything markedly
-# smaller is the same generic grey shield it serves for competitions it has no
-# artwork for — and stretched across a banner it reads as a broken image.
-_MIN_VENUE_WIDTH = 400
-
-
-@app.get("/api/venue-photo/{venue_id}")
-def venue_photo(venue_id: int):
-    """Photograph of the stadium, or 404 when the provider only has a placeholder.
-
-    404 rather than serving the shield: the client hides the banner on error,
-    which is the right outcome — no header at all beats a grey icon blown up to
-    a thousand pixels wide.
-    """
-    response = _serve_media("venues", venue_id, "Venue")
-    try:
-        with Image.open(BytesIO(response.body)) as img:
-            width, height = img.size
-    except Exception:
-        raise HTTPException(status_code=404, detail="Venue image unreadable.")
-
-    if width < _MIN_VENUE_WIDTH:
-        logger.info("Venue %s is a %dx%d placeholder, not a photograph",
-                    venue_id, width, height)
-        raise HTTPException(status_code=404, detail="No venue photograph.")
-    return response
-
-
 @app.get("/api/competition-logo/{league_id}")
 def competition_logo(league_id: int):
     """Official competition logo, or a typographic emblem if there isn't one.
@@ -910,18 +883,24 @@ def match_meta(fixture_id: int):
     return _with_colors(summary_cache.get(f"meta-{fixture_id}") or {})
 
 
-def _legacy_slice(fixture_id: int, keys: tuple, require: tuple) -> Optional[dict]:
-    """Pull one half out of a narrative cached before the split.
+def _migrated(fixture_id: int, half: str) -> Optional[dict]:
+    """Best cached copy of one half, brought forward to the current shape.
 
-    Those entries hold both halves in one blob, so reusing them saves paying to
-    regenerate text we already have. Returns None unless every key in `require`
-    is present — some early entries are partial, and half an opening on screen
-    is worse than regenerating it.
+    Ordered newest-format first so a current entry always beats a legacy one
+    for the same match. On a hit the normalised copy is written back under the
+    current key, so the reshaping happens once rather than on every read.
     """
-    legacy = summary_cache.get(f"narr-{fixture_id}")
-    if not legacy or any(not legacy.get(k) for k in require):
-        return None
-    return {k: legacy[k] for k in keys if k in legacy}
+    candidates = [
+        summary_cache.get(f"{'open' if half == 'opening' else 'anal'}-{fixture_id}"),
+        summary_cache.get(f"narr-{fixture_id}"),   # pre-split single blob
+        summary_cache.get(f"match-{fixture_id}"),  # original three-layer summary
+    ]
+    migrated = cache_migrate.first_usable(candidates, half)
+    if migrated and candidates[0] != migrated:
+        summary_cache.set(f"{'open' if half == 'opening' else 'anal'}-{fixture_id}", migrated)
+        logger.info("Migrated cached %s for fixture %s to the current shape",
+                    half, fixture_id)
+    return migrated
 
 
 def _derived_for(fixture_id: int) -> dict:
@@ -973,8 +952,7 @@ def match_opening(request: Request, fixture_id: int, refresh: bool = False):
     """
     cache_key = f"open-{fixture_id}"
     if not refresh:
-        cached = summary_cache.get(cache_key) or _legacy_slice(
-            fixture_id, ("headline", "tldr", "momentum_takeaways"), require=("headline", "tldr"))
+        cached = _migrated(fixture_id, "opening")
         if cached:
             # Derived data is recomputed rather than served from the cache —
             # it is free, and freezing it is how the Euro final kept reporting
@@ -1001,10 +979,7 @@ def match_analysis(request: Request, fixture_id: int, refresh: bool = False):
     """The analytical reads and both team breakdowns — fills in behind."""
     cache_key = f"anal-{fixture_id}"
     if not refresh:
-        cached = summary_cache.get(cache_key) or _legacy_slice(
-            fixture_id,
-            ("decisive_factor", "misleading_stat", "tactical_shifts", "team_breakdowns"),
-            require=("team_breakdowns",))
+        cached = _migrated(fixture_id, "analysis")
         if cached:
             return textclean.clean(cached)
 
