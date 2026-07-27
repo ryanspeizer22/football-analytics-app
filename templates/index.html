@@ -487,6 +487,20 @@
       color: var(--premium); background: rgba(240, 196, 55, 0.1);
       border: 1px solid rgba(240, 196, 55, 0.28);
     }
+    /* Half a report already on disk. Amber like `.fresh` because finishing it
+       costs the same single analysis, but dashed rather than solid: the work
+       is part done, and the card should look it. */
+    .mc-cache.partial {
+      color: var(--premium); background: rgba(240, 196, 55, 0.07);
+      border: 1px dashed rgba(240, 196, 55, 0.45);
+    }
+    /* Only for a match that has *not* been analysed once the free ones are
+       gone. An already-analysed match is never locked — it stays free — so
+       this must never be the badge shown on one. */
+    .mc-cache.locked {
+      color: var(--danger); background: rgba(255, 93, 108, 0.1);
+      border: 1px solid rgba(255, 93, 108, 0.3);
+    }
     /* Sets expectations before the click: the oldest matches have events but
        no team or player statistics, so the analysis lands without stat bars
        or player cards. Better said up front than discovered as empty panels. */
@@ -2035,16 +2049,61 @@
           const state = statuses[el.dataset.cacheFor];
           if (!state) continue;
           el.dataset.done = "1";
-          const free = isFounder();
-          el.className = "mc-cache " + (state.cached ? "cached" : free ? "founder" : "fresh");
-          el.textContent = state.cached ? "⚡ Instant" : free ? "⚡ Unlimited" : "✨ Uses 1 free";
-          el.title = state.cached
-            ? "Already analysed — opens instantly and costs nothing"
-            : free
-            ? "Founder access — fresh analyses are unlimited"
-            : "Not analysed yet — opening this spends one of your free analyses";
+          el.dataset.cached = state.cached ? "1" : "0";
+          // Half a report on disk is not "nothing analysed", and saying so is
+          // the difference between a card the visitor recognises and one that
+          // looks untouched.
+          el.dataset.partial =
+            !state.cached && (state.opening_cached || state.analysis_cached) ? "1" : "0";
+          applyCacheBadge(el);
         }
       } catch { /* badges are an enhancement; never break a grid over them */ }
+    }
+
+    /* Paints one card badge from the two things that decide what a click costs:
+       whether the server already holds the analysis, and whether this visitor
+       has already unlocked this fixture. Split out from the lookup above so the
+       badges can be re-stamped when the quota moves without asking again.
+
+       The order matters. An analysed match is free forever, so "analysed" and
+       "unlocked" are checked before anything to do with the quota — a match the
+       visitor can open for nothing must never be labelled as costing a free
+       analysis, and least of all as locked once the free ones are spent. */
+    function applyCacheBadge(el) {
+      if (!el.dataset.cached) return;         // status not known yet
+      const cached = el.dataset.cached === "1";
+      const unlocked = alreadySpentOn(el.dataset.cacheFor);
+      const [cls, text, title] = cached
+        ? ["cached", "⚡ Analysed · free",
+           "Already analysed — opens instantly and costs nothing"]
+        : unlocked
+        ? ["cached", "⚡ Yours · free",
+           "You have already opened this match — revisiting it is free"]
+        : isFounder()
+        ? ["founder", "⚡ Unlimited",
+           "Founder access — fresh analyses are unlimited"]
+        : freshRemaining() <= 0
+        ? ["locked", "🔒 No free left",
+           "Not analysed yet, and your free analyses are used up — "
+           + "already-analysed matches stay free"]
+        : el.dataset.partial === "1"
+        ? ["partial", "◐ Part-analysed · 1 free",
+           "Half of this match is already written — finishing the rest "
+           + "spends one of your free analyses"]
+        : ["fresh", "✨ Uses 1 free",
+           "Not analysed yet — opening this spends one of your free analyses"];
+      el.className = "mc-cache " + cls;
+      el.textContent = text;
+      el.title = title;
+    }
+
+    /* Re-stamps every badge already on the page. Called after the quota moves:
+       the card for the match just opened has become free, and if that was the
+       last free analysis the remaining unanalysed cards are no longer offering
+       something the visitor can spend. Reads no network — the server-side
+       cache state is remembered on each element. */
+    function refreshCacheBadges() {
+      document.querySelectorAll("[data-cache-for]").forEach(applyCacheBadge);
     }
 
     function esc(str) {
@@ -2478,7 +2537,15 @@
       const status = await matchStatus(match.fixture_id, controller.signal);
       if (superseded()) return;
       const isCached = !!(status && status.cached);
-      if (!isCached && !alreadySpentOn(match.fixture_id) && freshRemaining() <= 0) {
+      /* Read before spending, not after. spendFresh() below marks this fixture
+         as unlocked, so asking afterwards would call every first open a revisit
+         and the badge would never once say a fresh analysis was generated. */
+      const wasUnlocked = alreadySpentOn(match.fixture_id);
+      // Half already written: only the missing half is generated, so this is
+      // billed like a fresh one but should not be described as starting cold.
+      const isPartial = !!(status && !status.cached
+        && (status.opening_cached || status.analysis_cached));
+      if (!isCached && !wasUnlocked && freshRemaining() <= 0) {
         renderScoreboard(match, { cached: false, blocked: true });
         showView("summary");
         $("summary-loading").hidden = true;
@@ -2487,7 +2554,12 @@
         openUpgradeModal(match);
         return;
       }
-      if (!isCached) spendFresh(match.fixture_id);
+      if (!isCached) {
+        spendFresh(match.fixture_id);
+        // The grids behind this view are now out of date: this match has
+        // become free, and the quota that labels the others has moved.
+        refreshCacheBadges();
+      }
 
       // The tab title is per-match state too. Server-rendered on a deep link,
       // but client-side navigation left the previous fixture's title in place.
@@ -2497,7 +2569,9 @@
         : `${match.home.name} v ${match.away.name} — PitchSense`;
       setRoute(currentMatchSlug(match));
       setAmbient(match);
-      renderScoreboard(match, { cached: isCached });
+      renderScoreboard(match, {
+        cached: isCached, unlocked: wasUnlocked, partial: isPartial,
+      });
       showView("summary");
       $("summary-content").hidden = true;
       $("summary-error").hidden = true;
@@ -2616,16 +2690,25 @@
          a child of the centre column. As a grandchild it could only ever be as
          wide as the score, so on narrower screens it wrapped into the crests
          beside it. */
-      /* Says plainly whether opening this cost anything. A cached match is
-         instant and free; a fresh one is being generated now and has spent one
-         of the visitor's free analyses. */
+      /* Says plainly whether opening this cost anything. A match that has been
+         analysed — by anyone, or earlier by this visitor — is free and says so.
+         Only a generation happening right now reports against the quota, and
+         even then it never reads "0 left": the count is what remains *after*
+         this one, so on the last free analysis the honest line is that this was
+         it, not that the match being generated is somehow unavailable. */
+      const remaining = freshRemaining();
       const badge = !state ? "" : state.blocked
         ? `<span class="cache-badge locked">Free analyses used up</span>`
         : state.cached
-        ? `<span class="cache-badge cached">⚡ Cached · instant</span>`
+        ? `<span class="cache-badge cached">⚡ Already analysed · free</span>`
+        : state.unlocked
+        ? `<span class="cache-badge cached">⚡ Yours already · free to revisit</span>`
         : isFounder()
         ? `<span class="cache-badge founder">⚡ Founder Access · Unlimited</span>`
-        : `<span class="cache-badge fresh">✨ Fresh analysis · ${freshRemaining()} left</span>`;
+        : `<span class="cache-badge fresh">${state.partial
+              ? "◐ Completing the analysis"
+              : "✨ Fresh analysis"} · ${remaining > 0
+              ? `${remaining} free left` : "your last free one"}</span>`;
 
       const meta = [
         `${compLogo(m.competition_id)} ${esc(m.competition)}`,
@@ -2839,7 +2922,7 @@
         // this session does not charge twice for the same analysis.
         const spentKey = QUOTA_KEY + ":ids";
         const spent = JSON.parse(localStorage.getItem(spentKey) || "[]");
-        if (spent.includes(fixtureId)) return true;
+        if (spent.some((id) => String(id) === String(fixtureId))) return true;
         if (freshRemaining() <= 0) return false;
         spent.push(fixtureId);
         localStorage.setItem(spentKey, JSON.stringify(spent.slice(-50)));
@@ -2850,10 +2933,13 @@
       }
     }
 
+    /* Compared as strings deliberately: the ids are numbers when they come from
+       a match object and strings when they come from a card's dataset, and an
+       identity check would quietly report every card as never opened. */
     function alreadySpentOn(fixtureId) {
       try {
         return JSON.parse(localStorage.getItem(QUOTA_KEY + ":ids") || "[]")
-          .includes(fixtureId);
+          .some((id) => String(id) === String(fixtureId));
       } catch { return false; }
     }
 

@@ -1256,6 +1256,13 @@ def match_status_bulk(ids: str = Query(..., max_length=1200)):
             # Only the analysis decides whether opening this is charged —
             # player notes are free for everyone, so they do not gate anything.
             "cached": opening and analysis,
+            # The halves are reported separately, as the single-match route
+            # already does. Collapsing them to one boolean made a match whose
+            # opening was generated — and which the visitor remembers reading —
+            # indistinguishable from one nobody has ever opened, so the card
+            # offered to spend a free analysis on work already done.
+            "opening_cached": opening,
+            "analysis_cached": analysis,
         }
     return {"statuses": out}
 
