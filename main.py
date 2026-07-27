@@ -461,6 +461,29 @@ def _api_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=502, detail=str(exc))
 
 
+def _generation_failed(exc: Exception, label: str, fixture_id: int) -> HTTPException:
+    """Map any failed generation onto the 502 the client already handles.
+
+    Catching only the summarizer's own RuntimeError here meant everything else
+    the call can raise — the SDK's connection, timeout, rate-limit and upstream
+    5xx errors, and schema validation failures — left the handler unconverted
+    and reached the browser as a 500 on a half-painted page. Upstream trouble is
+    a bad gateway, which is what 502 is for and what the UI already explains.
+
+    Only RuntimeError's message is passed through: those are written for a
+    reader. The rest describe our own infrastructure, and some of them name our
+    configuration, so they are logged in full and reported generically.
+    """
+    logger.exception("%s generation failed for fixture %s", label, fixture_id)
+    if isinstance(exc, RuntimeError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(
+        status_code=502,
+        detail="The analysis service is temporarily unavailable. "
+               "Please try again in a moment.",
+    )
+
+
 def _fixture_card(f: dict) -> dict:
     """Map a raw API-Football fixture to the compact card shape the UI renders."""
     home, away = f["teams"]["home"], f["teams"]["away"]
@@ -1291,8 +1314,8 @@ def match_opening(request: Request, fixture_id: int, refresh: bool = False):
         logger.info("Generating opening for fixture %s", fixture_id)
         try:
             opening = ai_summarizer.generate_opening(context, derived.get("headline_metrics"))
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _generation_failed(exc, "Opening", fixture_id) from exc
 
     result = textclean.clean(opening.model_dump())
     if _cacheable(context):
@@ -1315,8 +1338,8 @@ def match_analysis(request: Request, fixture_id: int, refresh: bool = False):
         logger.info("Generating analysis for fixture %s", fixture_id)
         try:
             analysis = ai_summarizer.generate_analysis(context, derived.get("headline_metrics"))
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _generation_failed(exc, "Analysis", fixture_id) from exc
 
     result = textclean.clean(analysis.model_dump())
     result["team_breakdowns"] = _home_first(result.get("team_breakdowns") or [], context)
@@ -1466,9 +1489,8 @@ def match_summary(request: Request, fixture_id: int, refresh: bool = False):
         logger.info("Generating summary for fixture %s", fixture_id)
         try:
             summary = ai_summarizer.generate_match_summary(context)
-        except RuntimeError as exc:
-            logger.error("Summary generation failed for %s: %s", fixture_id, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _generation_failed(exc, "Summary", fixture_id) from exc
 
     result = textclean.clean(summary.model_dump())
 
@@ -1590,8 +1612,8 @@ def match_dossier(request: Request, fixture_id: int, refresh: bool = False):
         logger.info("Generating pre-match dossier for fixture %s", fixture_id)
         try:
             dossier = ai_summarizer.generate_prematch_dossier(context)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            raise _generation_failed(exc, "Dossier", fixture_id) from exc
 
     result = {
         "fixture": context["fixture"],
