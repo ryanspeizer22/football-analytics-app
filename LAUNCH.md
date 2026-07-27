@@ -51,11 +51,32 @@ that works. And a service with a volume attached can no longer run two
 deployments at once, so redeploys take a few seconds of downtime even with the
 health check configured.
 
-To verify it took, look for Railway's own `Mounting volume on: …` line in the
-deploy log. Do **not** rely on the app's mount-point warning as the signal: the
-check at `main.py:109` is gated behind `is_production`, which is false whenever
+To verify it took, ask the app:
+
+```
+curl -s https://<your-host>/health | jq .cache
+{
+  "path": "/app/.cache",       # where writes actually land, resolved
+  "configured": ".cache",      # the CACHE_DIR setting behind it
+  "is_mount_point": true,      # a volume is mounted there
+  "writable": true,            # probed, not assumed — a root-owned volume fails here
+  "persistent": true,          # both of the above; this is the field to alert on
+  "entries": { "summaries": 238, "photos": 662, ... }
+}
+```
+
+`persistent: false` means nothing written is surviving the next deploy, which
+is the failure this whole section exists to prevent. Railway's own
+`Mounting volume on: …` line in the deploy log corroborates it.
+
+Do **not** rely on the app's startup mount warning as the signal: the check at
+`main.py:109` is gated behind `is_production`, which is false whenever
 `PITCHSENSE_BASE_URL` is unset — so on a misconfigured service it stays silent
-whether or not the volume is mounted.
+whether or not the volume is mounted. That is what `/health` is for.
+
+If the volume is already mounted somewhere other than `/app/.cache`, set
+`CACHE_DIR` to that path instead of remounting — every cache in the app hangs
+off that one root.
 
 **Set `FORWARDED_ALLOW_IPS` to your platform's proxy address, and never to
 `*`.** This is the one setting here that silently costs money if it is wrong.

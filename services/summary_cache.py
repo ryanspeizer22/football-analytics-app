@@ -4,7 +4,8 @@ summary_cache.py
 Tiny two-level cache for generated AI summaries.
 
 Level 1: in-process dict (fast path within a server run).
-Level 2: JSON files under .cache/summaries/ (survives restarts and --reload).
+Level 2: JSON files under <cache root>/summaries/ (survives restarts and
+         --reload). The root defaults to .cache and is set by storage.py.
 
 Finished matches never change, so entries have no expiry — delete the
 .cache directory (or use the route's ?refresh=true) to force regeneration.
@@ -15,7 +16,9 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-CACHE_DIR = Path(".cache/summaries")
+from services import storage
+
+CACHE_DIR = storage.subdir("summaries")
 
 logger = logging.getLogger("pitchsense")
 

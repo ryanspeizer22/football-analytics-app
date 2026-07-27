@@ -53,6 +53,7 @@ from services import (
     slugs,
     squads,
     stats,
+    storage,
     cache_migrate,
     summary_cache,
     teams,
@@ -104,7 +105,7 @@ def _preflight() -> None:
         logger.info("Local mode: rate-limit bypass %s, base URL %s",
                     "on" if rate_limit._bypass_enabled() else "off", BASE_URL)
 
-    cache_root = PHOTO_CACHE_DIR.parent
+    cache_root = storage.CACHE_ROOT
     cache_root.mkdir(parents=True, exist_ok=True)
     if is_production and not os.path.ismount(str(cache_root)):
         logger.warning(
@@ -120,7 +121,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # media blockers, and the on-disk cache means a given asset is fetched from the
 # provider CDN at most once. None of it costs football-API quota — the media
 # CDN is a separate host from the data API.
-PHOTO_CACHE_DIR = Path(".cache/photos")
+PHOTO_CACHE_DIR = storage.subdir("photos")
 PHOTO_CDN = "https://media.api-sports.io/football/players/{player_id}.png"
 
 # The CDN addresses every asset by id under a per-kind path, so a crest or a
@@ -314,7 +315,7 @@ _OG_HEADERS = {"Cache-Control": "public, max-age=86400"}
 @app.get("/og/match/{fixture_id}.png")
 def og_match(fixture_id: int):
     """Branded preview card for a shared match link."""
-    cache_file = PHOTO_CACHE_DIR.parent / "og" / f"match-{fixture_id}.png"
+    cache_file = storage.CACHE_ROOT / "og" / f"match-{fixture_id}.png"
     if cache_file.exists():
         return Response(cache_file.read_bytes(), media_type="image/png", headers=_OG_HEADERS)
 
@@ -337,7 +338,7 @@ def og_match(fixture_id: int):
 @app.get("/og/compare/{a_id}-{b_id}.png")
 def og_compare(a_id: int, b_id: int):
     """Branded preview card for a shared comparison link."""
-    cache_file = PHOTO_CACHE_DIR.parent / "og" / f"cmp-{a_id}-{b_id}.png"
+    cache_file = storage.CACHE_ROOT / "og" / f"cmp-{a_id}-{b_id}.png"
     if cache_file.exists():
         return Response(cache_file.read_bytes(), media_type="image/png", headers=_OG_HEADERS)
 
@@ -692,7 +693,7 @@ def _serve_media(kind: str, asset_id: int, label: str) -> Response:
     if asset_id <= 0:
         raise HTTPException(status_code=400, detail=f"Invalid {label} id.")
 
-    cache_dir = PHOTO_CACHE_DIR.parent / _MEDIA_KINDS[kind]
+    cache_dir = storage.CACHE_ROOT / _MEDIA_KINDS[kind]
     cached = cache_dir / f"{asset_id}.png"
     if cached.exists():
         # Sniffed, not assumed: venue art is JPEG served from a .png path, and
@@ -751,7 +752,7 @@ def youtube_thumb(video_id: str):
     if not _YT_ID.match(video_id):
         raise HTTPException(status_code=400, detail="Invalid video id.")
 
-    cache_dir = PHOTO_CACHE_DIR.parent / "youtube"
+    cache_dir = storage.CACHE_ROOT / "youtube"
     cached = cache_dir / f"{video_id}.jpg"
     if cached.exists():
         return Response(cached.read_bytes(), media_type="image/jpeg",
@@ -1209,7 +1210,7 @@ def _mvp_appearances(player_id: int, limit: int = 12) -> list[dict]:
     ever reports matches that genuinely exist in the app.
     """
     found = []
-    for path in sorted(Path(".cache/summaries").glob("players-*.json")):
+    for path in sorted(summary_cache.CACHE_DIR.glob("players-*.json")):
         fixture_id = path.stem.replace("players-", "")
         payload = summary_cache.get(f"players-{fixture_id}")
         if not payload:
@@ -1735,11 +1736,19 @@ def premium_tactical(fixture_id: int):
 
 @app.get("/health")
 def health():
-    """Liveness plus AI-spend budget and provider quota, for monitoring."""
+    """Liveness plus AI-spend budget, provider quota and cache state.
+
+    The cache block is here because losing the volume is invisible from
+    everywhere else: the app keeps answering, and the only symptom is that
+    every finished match is re-analysed — at cost — after each deploy. Check
+    `cache.persistent` after a deploy; if it is false, nothing written is
+    surviving the next one.
+    """
     lo, hi = competitions.plan_window()
     return {
         "status": "ok",
         "budget": rate_limit.snapshot(),
         "football_api_quota": api_service.quota_snapshot(),
+        "cache": storage.state(),
         "seasons": {"min": lo, "max": hi, "default": competitions.default_season()},
     }
