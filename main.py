@@ -642,6 +642,24 @@ def competition_fixtures(
 _MEDIA_HEADERS = {"Cache-Control": "public, max-age=604800"}
 
 
+def _cache_media(cached: Path, payload: bytes) -> None:
+    """Store one fetched image, tolerating a cache that will not take it.
+
+    The cache saves a CDN round trip, not the response — so a cache that cannot
+    be written is a slow request, not a failed one. It used to be a failed one:
+    an unwritable root (a persistent volume that never mounted, one owned by
+    another user, or one that has filled up) raised straight out of the request
+    and turned every headshot, crest and competition logo on the page into a
+    500 at once. The image is already in hand by this point; serve it.
+    """
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(payload)
+    except OSError as exc:
+        logger.warning("Could not cache %s (%s); serving without caching",
+                       cached, exc)
+
+
 def _serve_media(kind: str, asset_id: int, label: str) -> Response:
     """Serve one provider image same-origin, caching it on first request.
 
@@ -670,8 +688,7 @@ def _serve_media(kind: str, asset_id: int, label: str) -> Response:
     if not resp.headers.get("content-type", "").startswith("image/"):
         raise HTTPException(status_code=404, detail=f"{label} image unavailable.")
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cached.write_bytes(resp.content)
+    _cache_media(cached, resp.content)
     return Response(resp.content, headers=_MEDIA_HEADERS,
                     media_type=resp.headers.get("content-type", "image/png"))
 
@@ -727,8 +744,7 @@ def youtube_thumb(video_id: str):
         # than a 404, so size is the only reliable signal that it is real.
         if resp.ok and resp.headers.get("content-type", "").startswith("image/") \
                 and len(resp.content) > 3000:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cached.write_bytes(resp.content)
+            _cache_media(cached, resp.content)
             return Response(resp.content, media_type="image/jpeg",
                             headers=_MEDIA_HEADERS)
 
@@ -748,7 +764,10 @@ def competition_logo(league_id: int):
         if hashlib.md5(response.body).hexdigest() != _PLACEHOLDER_LOGO_MD5:
             return response
         logger.info("Provider has no artwork for competition %s; using trophy", league_id)
-    except HTTPException:
+    except (HTTPException, OSError):
+        # OSError as well as the 404: reading the cached copy can fail on a
+        # volume that has gone away mid-flight, and the emblem below is a
+        # perfectly good answer in that case too.
         logger.info("Competition logo unavailable for %s; using trophy", league_id)
 
     return Response(_TROPHY_EMBLEM.read_bytes(),
