@@ -929,16 +929,21 @@ def _home_first(breakdowns: list[dict], context: dict) -> list[dict]:
     here rather than left to the prose.
     """
     teams_block = (context.get("fixture") or {}).get("teams") or {}
-    home_name = ((teams_block.get("home") or {}).get("name") or "").lower()
-    if not home_name or len(breakdowns) != 2:
+    home_name = ((teams_block.get("home") or {}).get("name") or "").strip().lower()
+    # Split once, and test the words rather than the string: a name that is
+    # blank after stripping is still truthy before it, so guarding on the
+    # string alone let a whitespace-only name reach an empty [0] below.
+    home_words = home_name.split()
+    if not home_words or len(breakdowns) != 2:
         return breakdowns
 
     def is_home(entry: dict) -> bool:
-        name = (entry.get("team_name") or "").lower()
+        name = (entry.get("team_name") or "").strip().lower()
+        words = name.split()
         # Names differ between feed and prose ("Paris Saint Germain" / "PSG"),
         # so compare on containment in either direction rather than equality.
-        return bool(name) and (name in home_name or home_name in name
-                               or name.split()[0] == home_name.split()[0])
+        return bool(words) and (name in home_name or home_name in name
+                                or words[0] == home_words[0])
 
     if is_home(breakdowns[1]) and not is_home(breakdowns[0]):
         logger.info("Team breakdowns arrived away-first; reordering to home-first")
@@ -1390,13 +1395,20 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
     # every match, so the measured fallback below stands in — real players,
     # real ratings, real portraits, assembled from the statistics with no model
     # involved. Better a card without commentary than an empty grid.
+    #
+    # Caught broadly on purpose. Narrowing this to the summarizer's own
+    # RuntimeError left the fallback unreachable for most of what actually goes
+    # wrong — the SDK's transport, rate-limit and authentication errors, and
+    # schema validation failures, all of which surfaced as a 500 on the tab
+    # this fallback exists to keep populated. Anything short of a cancelled
+    # request is better answered with the statistics than with an error.
     try:
         with _paid_call(request, f"player notes {fixture_id}"):
             logger.info("Generating player notes for fixture %s", fixture_id)
             notes = ai_summarizer.generate_player_pass(context)
-    except (RuntimeError, HTTPException) as exc:
-        logger.warning("Player pass unavailable for %s (%s); using statistics",
-                       fixture_id, exc)
+    except Exception as exc:
+        logger.warning("Player pass unavailable for %s (%s: %s); using statistics",
+                       fixture_id, type(exc).__name__, exc)
         fallback = enrich.enrich_player_notes(
             enrich.notes_from_statistics(context), context)
         # Deliberately not cached: this is a stand-in, and a later request
@@ -1412,9 +1424,18 @@ def match_players(request: Request, fixture_id: int, refresh: bool = False):
     except Exception:
         logger.exception("Player enrichment failed for fixture %s", fixture_id)
 
-    status = context["fixture"].get("fixture", {}).get("status", {}).get("short")
-    if status in FINISHED_STATUSES:
-        summary_cache.set(cache_key, result)
+    # The generation is paid for and in hand by this point, so nothing below is
+    # allowed to lose it: storing the result is an optimisation for the next
+    # reader, and the notes are returned whether or not it succeeds. Failing
+    # here used to discard a pass that had already been billed, and because
+    # nothing was cached, every retry was billed again.
+    try:
+        status = ((context.get("fixture") or {}).get("fixture", {})
+                  .get("status", {}).get("short"))
+        if status in FINISHED_STATUSES:
+            summary_cache.set(cache_key, result)
+    except Exception:
+        logger.exception("Could not cache player notes for fixture %s", fixture_id)
     return _use_photo_proxy(result)
 
 

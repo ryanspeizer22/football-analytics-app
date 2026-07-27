@@ -11,10 +11,13 @@ Finished matches never change, so entries have no expiry — delete the
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 CACHE_DIR = Path(".cache/summaries")
+
+logger = logging.getLogger("pitchsense")
 
 _memory: dict[str, Any] = {}
 
@@ -40,7 +43,21 @@ def get(key: str) -> Optional[Any]:
 
 
 def set(key: str, value: Any) -> None:
-    """Store a JSON-serializable value in both cache levels."""
+    """Store a JSON-serializable value in both cache levels.
+
+    The disk half is best-effort, matching get() above: an unreadable entry is
+    already treated as a miss, so an unwritable one is treated as a skipped
+    write rather than an error. A cache root that cannot be written — a
+    persistent volume that never mounted, one owned by another user, or one
+    that has filled up — used to raise out of whichever handler was storing its
+    result, which turned every generated section of the page into a 500. The
+    value is still held in memory for the life of the process, so the request
+    that produced it is answered either way.
+    """
     _memory[key] = value
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    _path(key).write_text(json.dumps(value, ensure_ascii=False))
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _path(key).write_text(json.dumps(value, ensure_ascii=False))
+    except OSError as exc:
+        logger.warning("Could not persist cache entry %s (%s); keeping it in "
+                       "memory only", key, exc)
